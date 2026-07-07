@@ -36,8 +36,9 @@ $fn = 72;
 led_active = led_n * led_pitch;          // lit area (= the light opening)
 pcb_w      = led_active + 2*border;       // PCB footprint (LED area + border)
 frame_out  = pcb_w + 2*wall;              // outer frame size
-base_ir    = led_active/2 + 3;            // keep the optical axis clear
-base_or    = frame_out/2 + base_wall;
+r_post     = (led_active/2 + frame_out/2) / 2;  // under the solid frame edge band
+base_ir    = r_post - post_d/2 - 2;       // ring reaches in under the posts
+base_or    = r_post + post_d/2 + base_wall;
 
 // -------------------------------------------------------------------------
 module ring(or, ir, h) {
@@ -73,11 +74,11 @@ module panel_frame() {
 }
 
 module posts() {
-  r = (frame_out/2 + base_or) / 2 - post_d/2;   // post ring radius
-  z0 = mount_z;
-  z1 = panel_height - diffuser_gap - diffuser_t; // frame bottom
-  for (a = [45, 135, 225, 315])
-    translate([r*cos(a), r*sin(a), z0])
+  z0 = mount_z - base_wall/2;                          // merge into the base ring
+  z1 = panel_height - diffuser_gap - diffuser_t + 2;   // overlap into the frame
+  // edge-midpoint angles sit under the solid frame band (not the aperture)
+  for (a = [0, 90, 180, 270])
+    translate([r_post*cos(a), r_post*sin(a), z0])
       cylinder(h = z1 - z0, r = post_d/2);
 }
 
@@ -87,7 +88,7 @@ module base_ring() {
     // TODO: replace these three screw holes with OpenFlexure's condenser
     // dovetail (reuse openflexure-microscope openscad libs/dovetail.scad) so
     // the head clips onto the stock illumination mount exactly.
-    for (a = [90, 210, 330])
+    for (a = [45, 165, 285])
       translate([(base_ir + base_or)/2 * cos(a),
                  (base_ir + base_or)/2 * sin(a), mount_z - base_wall])
         cylinder(h = base_wall * 2, r = screw_d/2);

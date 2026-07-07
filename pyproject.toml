@@ -2,7 +2,7 @@
 name = "bsccm-jax"
 version = "0.1.0"
 description = "JAX/Kidger-stack computational imaging workbench over the Berkeley Single-Cell Computational Microscopy dataset, with napari for visualization."
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.12,<3.13"
 
 # --- Core: JAX + Patrick Kidger's ecosystem ---------------------------------
 # The forward optical model is written as an Equinox module; inverse problems
@@ -37,6 +37,7 @@ dependencies = [
     "bsccm",
     "napari[all]>=0.5.0",
     "iohub>=0.2.3.post1",
+    "chromatix",
 ]
 
 [project.optional-dependencies]
@@ -72,6 +73,7 @@ override-dependencies = ["jax>=0.10.2", "jaxlib>=0.10.2"]
 # Use the cloned dataset repo as an editable dependency so the DPC forward model
 # in bsccm/phase can be edited in place while we re-JAX-ify it.
 bsccm = { path = "../BSCCM", editable = true }
+chromatix = { git = "https://github.com/TuragaLab/chromatix" }
 
 [build-system]
 requires = ["hatchling"]
