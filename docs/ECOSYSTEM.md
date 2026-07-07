@@ -122,7 +122,16 @@ See the hard-won setup gotchas in memory (`project_bsccm_jax`). Pipeline:
 Next: **trackio** (local, login-free, wandb-compatible) via Lightning's WandbLogger
 for loss curves + predicted-vs-true fluorescence image grids; then eval on val cells.
 
-## 7. Educational direction — IDEAL as a teaching tool
+## 7. Educational direction — a two-part computational-imaging curriculum
+
+Two short Waller-lab papers form a clean curriculum, and `bsccm-jax` is the JAX
+substrate to teach both on real single-cell data (browser/zero-hardware):
+- **Part 1 — "what to measure": IDEAL** (below). Imaging as an information channel.
+- **Part 2 — "how to reconstruct": "How to do Physics-based Learning"**
+  (Kellman, Lustig & Waller 2020, [arXiv:2005.13531](https://arxiv.org/abs/2005.13531)).
+  A 3-page tutorial: use autodiff through the forward model *twice* (to build the
+  reconstruction net, then to train it) — implement only the physics. This is
+  literally what `dpc.py` + `neural_field.py` + `amortized.py` demonstrate in JAX.
 
 IDEAL reframes imaging as an **information channel** — design = maximize mutual
 information, not visual prettiness — which is the single idea that explains *why
