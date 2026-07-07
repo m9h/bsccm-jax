@@ -1,0 +1,68 @@
+# VisCy/Cytoland fine-tune: BSCCM label-free Phase -> 6 fluorescence bands.
+# Self-contained (no cluster-path recipe includes). Paths are container-side
+# (/work is the Spark's ~/bsccm-train bind-mount).
+seed_everything: 42
+model:
+  class_path: cytoland.engine.VSUNet
+  init_args:
+    architecture: fcmae
+    model_config:
+      in_channels: 1          # Phase
+      out_channels: 6         # the 6 BSCCM fluorescence bands
+      encoder_blocks: [3, 3, 9, 3]
+      dims: [96, 192, 384, 768]
+      decoder_conv_blocks: 2
+      stem_kernel_size: [1, 2, 2]   # 2D stem
+      in_stack_depth: 1
+      pretraining: false
+    loss_function:
+      class_path: viscy_utils.losses.MixedLoss
+      init_args:
+        # MS-SSIM disabled: its 11x11 multiscale window underflows on 128px
+        # cells (coarsest scale is 8x8). Pure L1 for these small tiles.
+        l1_alpha: 1.0
+        l2_alpha: 0.0
+        ms_dssim_alpha: 0.0
+    lr: 0.0002
+    schedule: WarmupCosine
+    warmup_steps: 50
+    example_input_yx_shape: [128, 128]
+data:
+  class_path: viscy_data.hcs.HCSDataModule
+  init_args:
+    data_path: /work/data/bsccm_vs.zarr
+    source_channel: "Phase"
+    target_channel:
+      ["Fluor_690-", "Fluor_627-673", "Fluor_585-625",
+       "Fluor_550-570", "Fluor_500-550", "Fluor_426-446"]
+    z_window_size: 1
+    split_ratio: 0.85
+    batch_size: 16
+    num_workers: 4
+    yx_patch_size: [128, 128]
+    normalizations:
+      # reads per-FOV stats written by generate_normalization_metadata()
+      - class_path: viscy_transforms.NormalizeSampled
+        init_args:
+          keys: ["Phase", "Fluor_690-", "Fluor_627-673", "Fluor_585-625",
+                 "Fluor_550-570", "Fluor_500-550", "Fluor_426-446"]
+          level: fov_statistics
+          subtrahend: mean
+          divisor: std
+trainer:
+  accelerator: gpu
+  devices: 1
+  precision: bf16-mixed
+  max_epochs: 100
+  log_every_n_steps: 5
+  check_val_every_n_epoch: 2
+  default_root_dir: /work/out
+  logger: false   # VisCy's validation image-grid logging needs TB/W&B; skip it
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: loss/validate
+        mode: min
+        save_top_k: 3
+        save_last: true
+        filename: "bsccm-vs-{epoch:03d}-{step:05d}"

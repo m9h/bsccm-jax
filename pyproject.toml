@@ -36,6 +36,7 @@ dependencies = [
     # --- Dataset access + visualization ---
     "bsccm",
     "napari[all]>=0.5.0",
+    "iohub>=0.2.3.post1",
 ]
 
 [project.optional-dependencies]
