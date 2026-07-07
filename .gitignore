@@ -1,0 +1,22 @@
+# environments / caches
+.venv/
+.uvpython/
+.uvcache/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+
+# data (downloaded from Dryad; do not commit — 228 GB)
+data/
+*.zarr/
+*.tar.gz
+*.bin
+
+# credentials — never commit
+.config/
+dryad_credentials
+
+# generated figures / artifacts
+*.png
+!docs/**/*.png

@@ -1,0 +1,31 @@
+bsccm-jax — attribution and upstream copyrights
+================================================
+
+This project builds on the following BSD-3-Clause works. Their copyright notices
+are retained here as required by that license.
+
+1. BSCCM — Berkeley Single-Cell Computational Microscopy
+   Copyright (c) 2022, monakhova (Waller Lab, UC Berkeley)
+   https://github.com/Waller-Lab/BSCCM
+   Paper: Pinkard, Liu, Nyatigo, Fletcher & Waller, "The Berkeley Single Cell
+   Computational Microscopy (BSCCM) Dataset," arXiv:2402.06191 (2024).
+
+   src/bsccm_jax/dpc.py is a derivative work: it re-implements in JAX the DPC
+   weak-object transfer function forward model and Tikhonov phase reconstruction
+   from bsccm/phase/functional_dpc.py. Method reference: Tian & Waller,
+   "Quantitative differential phase contrast imaging in an LED array microscope,"
+   Optics Express 23(9):11394 (2015), and its 2023 errata.
+
+2. NSTM — Neural Space-Time Model
+   Copyright (c) 2024, Ruiming Cao
+   https://github.com/rmcao/nstm
+   Paper: Cao et al., "Neural space-time model for dynamic multi-shot imaging,"
+   Nature Methods (2024).
+
+   src/bsccm_jax/neural_field.py is an INDEPENDENT re-implementation (Equinox +
+   Optax) inspired by NSTM's neural-field object representation and coarse-to-fine
+   annealed positional encoding. It is not a copy of NSTM's source and does not
+   include NSTM's motion model or the `calcil`/`cc` training library.
+
+This project is not a fork of either repository; both are used as a data source
+and a methodological reference, respectively.

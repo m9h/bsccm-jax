@@ -1,0 +1,80 @@
+[project]
+name = "bsccm-jax"
+version = "0.1.0"
+description = "JAX/Kidger-stack computational imaging workbench over the Berkeley Single-Cell Computational Microscopy dataset, with napari for visualization."
+requires-python = ">=3.11,<3.13"
+
+# --- Core: JAX + Patrick Kidger's ecosystem ---------------------------------
+# The forward optical model is written as an Equinox module; inverse problems
+# are solved with Optimistix (nonlinear least squares / minimisation) backed by
+# Lineax (matrix-free linear operators + CG/GMRES). jaxtyping enforces array
+# shapes/dtypes. optax covers gradient-descent-style reconstruction.
+dependencies = [
+    "jax>=0.10.2",
+    "equinox>=0.11.7",
+    "diffrax>=0.6.0",
+    "optimistix>=0.0.9",
+    "lineax>=0.0.7",
+    "jaxtyping>=0.2.34",
+    "optax>=0.2.3",
+    "quax>=0.0.5",
+    "sympy2jax>=0.0.5",
+    # --- Imaging inverse-problem solver: purpose-built proximal/ADMM/TV in JAX.
+    # Composes with the Equinox forward model; carries the regularized-solve role
+    # that Lineax cannot (its linear_solve is broken under jax 0.7.1).
+    "scico>=0.0.7",
+    # --- Scientific + data plumbing ---
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "scikit-image>=0.24",
+    "zarr>=2.18,<3",
+    "dask[array]>=2024.1",
+    "tifffile>=2024.1",
+    "pooch>=1.8",
+    "tqdm>=4.66",
+    "pandas>=2.1",
+    # --- Dataset access + visualization ---
+    "bsccm",
+    "napari[all]>=0.5.0",
+]
+
+[project.optional-dependencies]
+# Torch-based tools kept out of the core per JAX-first preference. Install with
+#   uv sync --extra ml
+# Used only where no strong JAX equivalent exists (single-cell segmentation,
+# learned inverse-problem baselines, content-aware restoration).
+ml = [
+    "cellpose>=3.0",
+    "deepinv>=0.2",
+    # NOTE: careamics (torch CARE/N2V) intentionally omitted — it pins zarr>=3,
+    # which conflicts with the zarr-v2 arrays bsccm reads. Use a separate venv.
+]
+# Fourier-optics forward simulators for generating synthetic coded-illumination
+# data to complement BSCCM. Install with: uv sync --extra sim
+sim = [
+    "lightpipes>=2.1",
+    # NOTE: diffractio dropped — it pins numpy<2, conflicting with scico's
+    # numpy>=2. Reintroduce only in a separate env if its scalar-diffraction
+    # models are needed.
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.uv]
+# SCICO 0.0.7 caps jax<=0.8.1, but its code runs fine on jax 0.10.2 (verified by
+# a full ADMM+TV solve) — the pin is simply stale. Override it to pull the whole
+# platform onto the latest jax. Upstream fix: bump scico's jax/jaxlib pin.
+override-dependencies = ["jax>=0.10.2", "jaxlib>=0.10.2"]
+
+[tool.uv.sources]
+# Use the cloned dataset repo as an editable dependency so the DPC forward model
+# in bsccm/phase can be edited in place while we re-JAX-ify it.
+bsccm = { path = "../BSCCM", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bsccm_jax"]
