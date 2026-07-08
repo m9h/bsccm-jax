@@ -73,14 +73,26 @@ def target(indices):
 # IDEAL's thesis: the first predicts the second, *without ever training a decoder*.
 
 
-def gaussian_mi(X, y):
-    """Mean per-pixel MI(X; target_pixel) under a joint-Gaussian assumption."""
+def gaussian_mi(X, y, k=5):
+    """Cross-validated mean per-pixel Gaussian MI (nats).
+
+    Uses HELD-OUT residual variance, so — unlike an in-sample fit — it does not
+    inflate as you add features: an overfit predictor has large held-out residual
+    and therefore *low* estimated information. This is the honest ceiling.
+    """
+    n = len(X); fold = n // k
     Xn = (X - X.mean(0)) / (X.std(0) + 1e-8)
-    A = np.c_[Xn, np.ones(len(Xn))]
-    beta, *_ = np.linalg.lstsq(A, y, rcond=None)          # (nfeat+1, P)
-    resid = y - A @ beta
-    mi = 0.5 * np.log((y.var(0) + 1e-8) / (resid.var(0) + 1e-8))
-    return float(np.mean(np.clip(mi, 0, None)))
+    A = np.c_[Xn, np.ones(n)]
+    mis = []
+    for f in range(k):
+        te = np.zeros(n, bool); te[f * fold:(f + 1) * fold] = True
+        # ridge fit on train, residuals evaluated on held-out
+        AtA = A[~te].T @ A[~te] + 1e-1 * np.eye(A.shape[1])
+        beta = np.linalg.solve(AtA, A[~te].T @ y[~te])
+        resid_te = y[te] - A[te] @ beta
+        mi = 0.5 * np.log((y[te].var(0) + 1e-8) / (resid_te.var(0) + 1e-8))
+        mis.append(np.mean(np.clip(mi, 0, None)))
+    return float(np.mean(mis))
 
 
 def recoverability(X, y, k=5):
@@ -100,12 +112,20 @@ def recoverability(X, y, k=5):
 
 
 # %% compute for each measurement group
+# NOTE: `recoverability` (held-out prediction correlation) is the reliable,
+# well-defined metric here. The Gaussian `gaussian_mi` proxy is ILLUSTRATIVE
+# ONLY — estimating mutual information for image-valued targets is hard and this
+# proxy is unreliable (over/under-shoots). For the real information axis, use
+# Waller-Lab/EncodingInformation (the IDEAL codebase, JAX). The teaching point
+# stands on recoverability alone: richer coded measurements recover the marker
+# better; that difference is what IDEAL formalizes as information.
 y = target(idx)
 results = {}
 for name, chans in GROUPS.items():
     X = feats(idx, chans)
     results[name] = (gaussian_mi(X, y), recoverability(X, y))
-    print(f"{name:16s}  info={results[name][0]:+.3f} nats   recoverability(corr)={results[name][1]:+.3f}")
+    print(f"{name:16s}  recoverability(corr)={results[name][1]:+.3f}"
+          f"   [MI proxy {results[name][0]:+.3f} nats — illustrative only]")
 
 # %% [markdown]
 # ## 3. The lesson
