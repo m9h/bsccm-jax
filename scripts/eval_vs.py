@@ -38,6 +38,7 @@ def main():
     ap.add_argument("--ckpt", required=True)
     ap.add_argument("--data", default="/work/data/bsccm_vs.zarr")
     ap.add_argument("--out", default="/work/vs_eval.png")
+    ap.add_argument("--json", default=None, help="write metrics as JSON for the benchmark")
     ap.add_argument("--n", type=int, default=5)
     args = ap.parse_args()
 
@@ -93,9 +94,20 @@ def main():
         ssim = np.mean(m["ssim"]) if m["ssim"] else float("nan")
         psnr = np.mean(m["psnr"]) if m["psnr"] else float("nan")
         print(f"  {c:14s} {np.mean(m['corr']):+.3f} {ssim:6.3f} {psnr:6.1f}  {np.mean(m['base']):+.3f}")
-    overall = np.mean([np.mean(per[c]["corr"]) for c in FLUOR])
-    floor = np.mean([np.mean(per[c]["base"]) for c in FLUOR])
+    overall = float(np.mean([np.mean(per[c]["corr"]) for c in FLUOR]))
+    floor = float(np.mean([np.mean(per[c]["base"]) for c in FLUOR]))
     print(f"  {'OVERALL':14s} {overall:+.3f}  (mean-image floor {floor:+.3f} — model must beat this)")
+
+    if args.json:
+        import json
+        metrics = {"overall_corr": round(overall, 4), "floor": round(floor, 4),
+                   "beats_floor": bool(overall > floor), "n_val": len(val),
+                   "per_channel": {c: {"corr": round(float(np.mean(per[c]["corr"])), 4),
+                                       "ssim": round(float(np.mean(per[c]["ssim"])), 4) if per[c]["ssim"] else None,
+                                       "psnr": round(float(np.mean(per[c]["psnr"])), 2) if per[c]["psnr"] else None,
+                                       "floor": round(float(np.mean(per[c]["base"])), 4)} for c in FLUOR}}
+        json.dump(metrics, open(args.json, "w"), indent=2)
+        print("wrote", args.json)
 
     # montage: show the most-informative fluor channel (500-550, index 4) per cell
     import matplotlib

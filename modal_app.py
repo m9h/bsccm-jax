@@ -124,14 +124,24 @@ def train_staining(zarr: str = "/data/bsccm_vs.zarr", max_epochs: int = 100):
         f"--data.init_args.data_path={zarr} --trainer.max_epochs={max_epochs} "
         f"--trainer.default_root_dir=/data/vs_out --trainer.enable_progress_bar=false",
         shell=True, cwd="/root/bsccm-jax", check=True)
+    # 3) evaluate best checkpoint -> metrics JSON (corr, SSIM, PSNR vs mean-image floor)
+    ck = subprocess.run("ls -t /data/vs_out/**/checkpoints/*.ckpt 2>/dev/null | grep -v last | head -1 || "
+                        "find /data/vs_out -name '*.ckpt' | head -1",
+                        shell=True, capture_output=True, text=True).stdout.strip()
+    subprocess.run(f"python scripts/eval_vs.py --ckpt {ck} --data {zarr} "
+                   f"--json /data/vs_metrics.json --out /data/vs_eval.png --n 16",
+                   shell=True, cwd="/root/bsccm-jax", check=True)
     vol.commit()
-    print("virtual-staining model trained -> /data/vs_out (committed)")
+    print("virtual-staining trained + evaluated -> /data/vs_out, /data/vs_metrics.json")
 
 
 @app.function(image=image, cpu=8.0, memory=32768, volumes={"/data": vol}, timeout=3 * 3600)
 def benchmark(data_path: str = "/data/BSCCM"):
     """Run the full-dataset benchmark and print the consolidated results table."""
-    _run(f"uv run python scripts/run_benchmark.py --data {data_path} --n 6000 --out /data/benchmark_results.json")
+    import os
+    sm = " --staining-metrics /data/vs_metrics.json" if os.path.exists("/data/vs_metrics.json") else ""
+    _run(f"uv run python scripts/run_benchmark.py --data {data_path} --n 6000 "
+         f"--out /data/benchmark_results.json{sm}")
     vol.commit()
 
 
