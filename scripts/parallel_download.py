@@ -108,17 +108,24 @@ def main():
             print(f"  {done[0]/1e9:6.1f}/{total/1e9:.1f} GB  {done[0]/el/1e6:5.1f} MB/s  "
                   f"({100*done[0]/total:.0f}%)", flush=True)
 
-    combined = dest / PREFIX[args.variant].split("_chunk")[0]      # e.g. BSCCM.tar.gz
-    print(f"combining -> {combined}")
-    with open(combined, "wb") as out:
-        for f in chunks:
-            with open(dest / f["path"], "rb") as p:
-                shutil.copyfileobj(p, out, 1 << 24)
     if args.extract:
-        print(f"extracting {combined} ...")
-        with tarfile.open(combined) as t:
-            t.extractall(dest)
-    print(f"DONE in {(time.time()-t0)/60:.1f} min -> {dest}")
+        # space-efficient: stream chunks into `tar -xz`, deleting each chunk once
+        # it's been fed in, so peak disk stays ~= one copy of the data (not two).
+        import subprocess
+        out_dir = dest / "extracted"; out_dir.mkdir(exist_ok=True)
+        names = " ".join(f'"{dest / f["path"]}"' for f in chunks)
+        print(f"stream-extracting {len(chunks)} chunks -> {out_dir} (deleting as consumed)")
+        pipe = f'for c in {names}; do cat "$c" && rm -f "$c"; done | tar -xzf - -C "{out_dir}"'
+        subprocess.run(pipe, shell=True, check=True, executable="/bin/bash")
+        print(f"DONE in {(time.time()-t0)/60:.1f} min -> {out_dir}")
+    else:
+        combined = dest / PREFIX[args.variant].split("_chunk")[0]
+        print(f"combining -> {combined}")
+        with open(combined, "wb") as out:
+            for f in chunks:
+                with open(dest / f["path"], "rb") as p:
+                    shutil.copyfileobj(p, out, 1 << 24)
+        print(f"DONE in {(time.time()-t0)/60:.1f} min -> {combined}")
 
 
 if __name__ == "__main__":
