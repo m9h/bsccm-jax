@@ -12,11 +12,15 @@ phase sample (`phase_change`); the objective imposes its NA as a coherent
 low-pass in the pupil plane; intensities are summed incoherently over the source.
 
 STATUS: WIP. Chromatix is integrated (installs on jax 0.10.2, coexists with our
-stack) and this forward runs, but it does NOT yet quantitatively match the WOTF
-(cross-check ~0 correlation on a weak object). The calibration TODO is the
-`kykx` unit convention (Chromatix's k-space units vs our 1/um) and the
-pupil-plane placement — if the illumination tilt is mis-scaled the half-annulus
-asymmetry vanishes. Fix those before trusting this as an oracle.
+stack) and this forward runs. Calibration so far:
+  * FIXED: kykx is the angular wavenumber 2*pi*sin(theta)/wavelength (was missing
+    the 2*pi -> illumination tilt 2pi x too small -> no DPC asymmetry).
+  * STILL OPEN: cross-check with the WOTF is still ~0 correlation, so a second
+    convention mismatch remains. Prime suspect: mixing Chromatix's field/FFT grid
+    with our shifted F/iF pupil (frequency grids may not align), or the objective
+    should be modelled with Chromatix's own ff_lens + circular_pupil (4f chain)
+    rather than our hand-applied Fourier low-pass. Diagnose by comparing the raw
+    per-angle |field|^2 spectra between the two before trusting this as an oracle.
 """
 
 from __future__ import annotations
@@ -32,8 +36,14 @@ F, iF = dpc.F, dpc.iF
 
 
 def _half_annulus_points(na_illum, wavelength, half, n, na_inner=0.0):
-    """Source-point directions (ky, kx) [1/um] filling a half of the illum NA."""
-    r = np.sqrt(np.random.default_rng(0).uniform(na_inner ** 2, na_illum ** 2, n * 3)) / wavelength
+    """Source-point angular wavevectors (ky, kx) filling a half of the illum NA.
+
+    Chromatix builds the plane wave as exp(1j * kykx . grid) with grid in um, so
+    kykx is the ANGULAR transverse wavenumber 2*pi*sin(theta)/wavelength (not the
+    plain spatial frequency sin(theta)/wavelength — the 2*pi matters).
+    """
+    sin_th = np.sqrt(np.random.default_rng(0).uniform(na_inner ** 2, na_illum ** 2, n * 3))
+    r = 2.0 * np.pi * sin_th / wavelength
     th = np.random.default_rng(1).uniform(0, 2 * np.pi, n * 3)
     ky, kx = r * np.sin(th), r * np.cos(th)
     keep = {"top": ky > 0, "bottom": ky < 0, "left": kx < 0, "right": kx > 0}[half]
