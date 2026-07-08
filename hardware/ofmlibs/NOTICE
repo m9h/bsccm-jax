@@ -1,0 +1,21 @@
+Vendored OpenFlexure Microscope OpenSCAD libraries
+==================================================
+
+Files in this directory (libdict.scad, utilities.scad, locking_dovetail.scad)
+are taken verbatim from the OpenFlexure Microscope project:
+
+    https://gitlab.com/openflexure/openflexure-microscope
+    (c) Richard Bowman and OpenFlexure contributors, 2016-
+    Licensed under CERN-OHL-W v2 (Weakly Reciprocal).
+
+They are included so that ../led_head_ofm.scad can reproduce the *exact*
+condenser dovetail (dovetail_clamp_m / dovetail_params) and therefore mate with
+a stock OpenFlexure illumination dovetail.
+
+These files are UNMODIFIED. ../led_head_ofm.scad is a derived work and is
+likewise covered by CERN-OHL-W v2; if you distribute it you must make your
+modifications to the covered geometry available under the same terms. The rest
+of this repository (the Python package, led_frame.scad, led_head.scad,
+gen_led_head.py) is under the repository's own license and is not affected.
+
+Full licence text: https://ohwr.org/cern_ohl_w_v2.txt

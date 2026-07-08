@@ -43,7 +43,8 @@ def bench_classification_regression(data_path, n):
 
     try:
         import jax, jax.numpy as jnp
-        Y = np.asarray(data.get_surface_marker_data(gi), np.float32).reshape(len(gi), -1)
+        sm = data.get_surface_marker_data(gi)
+        Y = np.asarray(sm[1], np.float32)                 # (N, 9) marker abundances
         reg, rn = ph.train_regressor(X[tr], Y[tr], steps=2500)
         mu, sd, ym, ys = rn
         pr = np.asarray(jax.vmap(reg)((jnp.asarray(X[va]) - mu) / sd)) * np.asarray(ys) + np.asarray(ym)

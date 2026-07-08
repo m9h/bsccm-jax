@@ -195,3 +195,109 @@ def calibration_report(
             f"finer-pitch panel for a smooth DPC source"
         )
     return rep
+
+
+# --- Fourier ptychography bridge ---------------------------------------------
+# These connect the PHYSICAL array to the existing solver in bsccm_jax.fpm
+# (fpm.fpm_forward / fpm.reconstruct_fpm) — they replace the abstract
+# fpm.led_grid_shifts(n_side, spacing) with shifts from real geometry, without
+# touching fpm.py.
+
+def pupil_radius_px(na, wavelength_um, pixel_size_um, shape) -> float:
+    """Objective pupil radius in spectrum pixels: (NA/wavelength) / df."""
+    df = 1.0 / (shape[0] * pixel_size_um)
+    return (na / wavelength_um) / df
+
+
+def fpm_shifts(array: LEDArray, na, wavelength_um, pixel_size_um, shape,
+               upsample: int = 2) -> Int[Array, "k 2"]:
+    """Per-LED (row, col) integer pupil shift in spectrum pixels, for fpm.fpm_forward.
+
+    An LED at direction cosines ``(a, b)`` shifts the object spectrum by
+    ``(a, b)/wavelength``; dividing by ``df = 1/(N*pixel_size)`` gives the shift in
+    pixels (identical on the low-res and high-res grids — they share the field of
+    view, hence ``df``).  LEDs whose crop would fall off the high-res grid are
+    dropped.  Unlike ``na`` in the DPC helpers this includes **dark-field** LEDs
+    (illumination NA > objective NA) — those carry the super-resolution.
+
+    Axis mapping matches ``fpm.fpm_forward`` (spectrum axis 0 = fy, axis 1 = fx).
+    The absolute row/col orientation and any flip are calibrated against a real
+    capture (cf. Waller ``Angle_SelfCalibration``); for a symmetric array the shift
+    set is orientation-invariant.
+    """
+    n = shape[0]
+    df = 1.0 / (n * pixel_size_um)
+    a, b = array.direction_cosines()
+    row = jnp.round((b / wavelength_um) / df).astype(int).ravel()  # b -> fy -> axis 0
+    col = jnp.round((a / wavelength_um) / df).astype(int).ravel()  # a -> fx -> axis 1
+    lim = (n * upsample) // 2 - n // 2            # keep the N-crop inside the M grid
+    keep = (jnp.abs(row) <= lim) & (jnp.abs(col) <= lim)
+    return jnp.stack([row[keep], col[keep]], axis=1)
+
+
+def fpm_setup(array: LEDArray, shape, *, na, pixel_size_um,
+              wavelength_um: float = 0.525, upsample: int = 2):
+    """Ready-to-use ``(shifts, pupil, hr_shape)`` for ``bsccm_jax.fpm``.
+
+        shifts, pupil, hr_shape = fpm_setup(arr, (N, N), na=0.25, pixel_size_um=0.33)
+        imgs = fpm.fpm_forward(obj_hr, shifts, pupil, (N, N))
+        obj  = fpm.reconstruct_fpm(imgs, shifts, pupil, hr_shape)
+    """
+    from . import fpm  # lazy import: keep led_array free of an fpm dependency
+    n = shape[0]
+    shifts = fpm_shifts(array, na, wavelength_um, pixel_size_um, shape, upsample)
+    pupil = fpm.circ_pupil(shape, pupil_radius_px(na, wavelength_um, pixel_size_um, shape))
+    return shifts, pupil, (n * upsample, n * upsample)
+
+
+# --- Learned-design bridge (design.py pupil sources <-> physical LEDs) --------
+# bsccm_jax.design optimizes CONTINUOUS pupil source patterns; the head can only
+# light discrete LEDs. These map an optimized source to per-LED brightness the
+# `illuminate` firmware can display, and realize the LED-quantized source back so
+# the deployable design can be scored (design.sources_recon_error). DPC/design
+# Fourier convention (a -> fx -> axis 0), matching led_dpc_sources.
+
+def _led_pupil_indices(array: LEDArray, wavelength_um, pixel_size_um, shape):
+    """Nearest spatial-frequency (row, col) index of each LED's pupil position."""
+    fx_g, fy_g = spatial_freq_grid(shape, pixel_size_um)
+    fx_ax, fy_ax = fx_g[:, 0], fy_g[0, :]
+    a, b = array.direction_cosines()
+    ix = jnp.argmin(jnp.abs(fx_ax[None, None, :] - (a / wavelength_um)[..., None]), -1)
+    iy = jnp.argmin(jnp.abs(fy_ax[None, None, :] - (b / wavelength_um)[..., None]), -1)
+    return ix, iy  # (n, n) each
+
+
+def sources_to_led_brightness(array: LEDArray, sources, wavelength_um,
+                              pixel_size_um, shape) -> Float[Array, "k n n"]:
+    """Sample continuous pupil source patterns at each LED -> per-LED brightness.
+
+    ``sources`` is ``(K, H, W)`` from ``design.learn_illumination``; each physical
+    LED sits at pupil coordinate ``(a, b)/wavelength``, so sampling the source
+    there gives the grayscale value to send that LED.  Normalised per pattern to
+    ``[0, 1]``.  LEDs outside the pupil sample the source's zero region -> off.
+    """
+    ix, iy = _led_pupil_indices(array, wavelength_um, pixel_size_um, shape)
+    sources = jnp.atleast_3d(jnp.asarray(sources))
+
+    def one(s):
+        bright = s[ix, iy]
+        return bright / (bright.max() + 1e-9)
+
+    return jax.vmap(one)(sources)
+
+
+def realize_source_from_leds(array: LEDArray, brightness, wavelength_um,
+                             pixel_size_um, shape) -> Float[Array, "k h w"]:
+    """The pupil source the head *actually* produces: LEDs as weighted deltas.
+
+    Inverse of :func:`sources_to_led_brightness`; feed the result to
+    ``design.sources_recon_error`` to score the LED-quantized (deployable) design
+    against the continuous one and the DPC baseline.
+    """
+    ix, iy = _led_pupil_indices(array, wavelength_um, pixel_size_um, shape)
+    brightness = jnp.atleast_3d(jnp.asarray(brightness))
+
+    def one(bw):
+        return jnp.zeros(shape).at[ix, iy].add(bw)
+
+    return jax.vmap(one)(brightness)

@@ -55,18 +55,20 @@ def main():
     # --- regression (surface markers), if available ---
     try:
         sm = data.get_surface_marker_data(gi)
-        Y = np.asarray(sm, np.float32)
-        Y = Y.reshape(len(gi), -1)
+        names = list(sm[0]); Y = np.asarray(sm[1], np.float32)   # (N, 9) marker abundances
         reg, rn = ph.train_regressor(X[tr], Y[tr], steps=args.steps)
-        import jax
+        import jax, jax.numpy as jnp
         mu, sd, ym, ys = rn
-        import jax.numpy as jnp
         pr = np.asarray(jax.vmap(reg)((jnp.asarray(X[va]) - mu) / sd)) * np.asarray(ys) + np.asarray(ym)
         cors = [np.corrcoef(pr[:, k], Y[va][:, k])[0, 1] for k in range(Y.shape[1])]
         print(f"\nREGRESSION (surface markers, held-out):")
-        print(f"  mean Pearson     {np.nanmean(cors):.3f}   (benchmark ~0.72 for CD16)")
+        print(f"  mean Pearson     {np.nanmean(cors):.3f}")
+        cd16 = [i for i, n in enumerate(names) if "CD16" in n]
+        if cd16:
+            print(f"  CD16 Pearson     {cors[cd16[0]]:.3f}   (benchmark ~0.72)")
     except Exception as e:
-        print(f"\nREGRESSION skipped: {type(e).__name__}: {str(e)[:80]}")
+        import traceback; traceback.print_exc()
+        print(f"\nREGRESSION skipped: {type(e).__name__}: {str(e)[:100]}")
 
 
 if __name__ == "__main__":
