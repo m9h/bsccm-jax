@@ -111,3 +111,56 @@ def train_lcnf(meas_stack, phase_stack, *, latent=16, num_freqs=4, epochs=60,
     preds = jax.vmap(lambda m: model(m))(va_m)
     val_corr = float(jnp.mean(jax.vmap(corr)(preds, va_p)))
     return model, val_corr
+
+
+def train_lcnf_selfsupervised(meas_stack, Hp, *, latent=16, num_freqs=4, epochs=80,
+                              batch=8, lr=1e-3, seed=0, val_frac=0.2, phase_stack=None):
+    """Train the LCNF with NO phase labels — physics forward-consistency only.
+
+    Loss = || DPC_forward(LCNF(meas)) - meas ||^2, i.e. the predicted phase must
+    reproduce the measurements through the (differentiable) DPC WOTF operator
+    ``Hp`` (from dpc.dpc_2axis_transfer). This is NeuPh/PtychoPINN's real mode:
+    generalizable reconstruction learned from measurements alone. ``phase_stack``
+    is optional and used only to report held-out correlation, never for training.
+    """
+    from bsccm_jax.dpc import dpc_apply_phase
+
+    meas_stack = jnp.asarray(meas_stack, jnp.float64)
+    n = len(meas_stack); nval = max(1, int(n * val_frac))
+    tr_m, va_m = meas_stack[nval:], meas_stack[:nval]
+
+    model = LCNF(in_ch=meas_stack.shape[1], latent=latent, num_freqs=num_freqs,
+                 key=jax.random.PRNGKey(seed))
+    opt = optax.adam(lr)
+    state = opt.init(eqx.filter(model, eqx.is_array))
+
+    def loss_fn(model, mb):                       # self-supervised: no labels
+        phase = jax.vmap(lambda m: model(m))(mb)
+        pred_meas = jax.vmap(lambda p: dpc_apply_phase(Hp, p))(phase)
+        return jnp.mean((pred_meas - mb) ** 2)
+
+    @eqx.filter_jit
+    def step(model, state, mb):
+        loss, g = eqx.filter_value_and_grad(loss_fn)(model, mb)
+        upd, state = opt.update(g, state)
+        return eqx.apply_updates(model, upd), state, loss
+
+    key = jax.random.PRNGKey(seed + 1)
+    steps = max(1, tr_m.shape[0] // batch)
+    for _ in range(epochs):
+        key, sk = jax.random.split(key)
+        perm = jax.random.permutation(sk, tr_m.shape[0])
+        for s in range(steps):
+            idx = perm[s * batch:(s + 1) * batch]
+            model, state, _ = step(model, state, tr_m[idx])
+
+    val_corr = None
+    if phase_stack is not None:
+        def corr(a, b):
+            a = a.ravel() - a.mean(); b = b.ravel() - b.mean()
+            return (a * b).sum() / (jnp.linalg.norm(a) * jnp.linalg.norm(b) + 1e-12)
+        va_p = jnp.asarray(phase_stack, jnp.float64)[:nval]
+        preds = jax.vmap(lambda m: model(m))(va_m)
+        # phase-only forward has a sign/scale gauge; report |corr|
+        val_corr = float(jnp.mean(jnp.abs(jax.vmap(corr)(preds, va_p))))
+    return model, val_corr
