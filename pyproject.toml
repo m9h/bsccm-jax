@@ -33,14 +33,16 @@ dependencies = [
     "pooch>=1.8",
     "tqdm>=4.66",
     "pandas>=2.1",
-    # --- Dataset access + visualization ---
+    # --- Dataset access ---
     "bsccm",
-    "napari[all]>=0.5.0",
     "iohub>=0.2.3.post1",
     "chromatix",
 ]
 
 [project.optional-dependencies]
+# napari (heavy Qt) is only needed for interactive viewing — not for headless
+# cloud training / CI. Install with: uv sync --extra viz
+viz = ["napari[all]>=0.5.0"]
 # Torch-based tools kept out of the core per JAX-first preference. Install with
 #   uv sync --extra ml
 # Used only where no strong JAX equivalent exists (single-cell segmentation,
@@ -70,9 +72,9 @@ dev = ["pytest>=8.0"]
 override-dependencies = ["jax>=0.10.2", "jaxlib>=0.10.2"]
 
 [tool.uv.sources]
-# Use the cloned dataset repo as an editable dependency so the DPC forward model
-# in bsccm/phase can be edited in place while we re-JAX-ify it.
-bsccm = { path = "../BSCCM", editable = true }
+# bsccm is installed from PyPI (self-contained: a fresh clone installs anywhere,
+# incl. Modal/CI). Our dpc.py re-implements its DPC model, so no editable checkout
+# of the dataset repo is needed.
 chromatix = { git = "https://github.com/TuragaLab/chromatix" }
 
 [build-system]

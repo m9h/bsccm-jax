@@ -211,7 +211,7 @@ wheels = [
 [[package]]
 name = "bsccm"
 version = "1.2.1"
-source = { editable = "../BSCCM" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
     { name = "pandas" },
@@ -219,14 +219,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "zarr" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "requests" },
-    { name = "tqdm" },
-    { name = "zarr" },
+sdist = { url = "https://files.pythonhosted.org/packages/bc/1c/59254b9bddfc1152c4d37aa9465277c374308932a2efbe0c70b58fabc9ae/bsccm-1.2.1.tar.gz", hash = "sha256:43629fb143517af349a91a4d080ce00addb14cffa14bcf86d26d19ef330771bc", size = 33384, upload-time = "2025-10-27T16:22:13.233Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e4/a8/98839a6d273f624f0e92ede655d7fe2951b02df11ebb4c3e3656ce85040f/bsccm-1.2.1-py3-none-any.whl", hash = "sha256:4d343a391a0cfccc734855f35bef1d0278da548b27e4038c30b89fcabc089b88", size = 35877, upload-time = "2025-10-27T16:22:12.366Z" },
 ]
 
 [[package]]
@@ -243,7 +238,6 @@ dependencies = [
     { name = "jax" },
     { name = "jaxtyping" },
     { name = "lineax" },
-    { name = "napari", extra = ["all"] },
     { name = "numpy" },
     { name = "optax" },
     { name = "optimistix" },
@@ -267,6 +261,9 @@ ml = [
 sim = [
     { name = "lightpipes" },
 ]
+viz = [
+    { name = "napari", extra = ["all"] },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -275,7 +272,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bsccm", editable = "../BSCCM" },
+    { name = "bsccm" },
     { name = "cellpose", marker = "extra == 'ml'", specifier = ">=3.0" },
     { name = "chromatix", git = "https://github.com/TuragaLab/chromatix" },
     { name = "dask", extras = ["array"], specifier = ">=2024.1" },
@@ -287,7 +284,7 @@ requires-dist = [
     { name = "jaxtyping", specifier = ">=0.2.34" },
     { name = "lightpipes", marker = "extra == 'sim'", specifier = ">=2.1" },
     { name = "lineax", specifier = ">=0.0.7" },
-    { name = "napari", extras = ["all"], specifier = ">=0.5.0" },
+    { name = "napari", extras = ["all"], marker = "extra == 'viz'", specifier = ">=0.5.0" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "optax", specifier = ">=0.2.3" },
     { name = "optimistix", specifier = ">=0.0.9" },
@@ -302,7 +299,7 @@ requires-dist = [
     { name = "tqdm", specifier = ">=4.66" },
     { name = "zarr", specifier = ">=2.18,<3" },
 ]
-provides-extras = ["ml", "sim"]
+provides-extras = ["viz", "ml", "sim"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0" }]
