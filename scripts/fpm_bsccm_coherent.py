@@ -19,10 +19,19 @@ import numpy as np
 from bsccm_jax import fpm
 
 
-def led_positions():
+def led_na_map():
+    """led_num -> (na_y, na_x) using BSCCM's OWN calibration (z_offset=8).
+
+    Using the raw nominal z=50 gives mis-scaled shifts -> a periodic lattice
+    artifact in the reconstruction; the calibrated NA fixes it.
+    """
     import bsccm
-    qd = json.load(open(os.path.join(os.path.dirname(bsccm.__file__), "quasi_dome_design.json")))
-    return {e["led_num"]: (e["x"], e["y"], e["z"]) for e in qd["led_list"]}
+    from bsccm.led_array_calibration import load_led_positions_from_json
+    qd_path = os.path.join(os.path.dirname(bsccm.__file__), "quasi_dome_design.json")
+    naxy, _na, _cart = load_led_positions_from_json(qd_path)      # z_offset=8 default
+    qd = json.load(open(qd_path))
+    # naxy[:,0] from x (na_x), naxy[:,1] from y (na_y)
+    return {e["led_num"]: (float(naxy[i, 1]), float(naxy[i, 0])) for i, e in enumerate(qd["led_list"])}
 
 
 def main():
@@ -43,16 +52,14 @@ def main():
     chans = data.led_array_channel_names
     idx = int(args.cell) if args.cell is not None else int(data.get_indices()[0])
 
-    pos = led_positions()
+    namap = led_na_map()
     lr = None; imgs = []; shifts = []
     df = None
     for c in chans:
         num = int(c.split("_")[1])
-        if num not in pos:
+        if num not in namap:
             continue
-        x, y, z = pos[num]
-        dist = (x * x + y * y + z * z) ** 0.5
-        na_y, na_x = y / dist, x / dist                       # illumination direction cosines
+        na_y, na_x = namap[num]                               # calibrated illumination NA
         im = np.asarray(data.read_image(idx, c, copy=True), np.float32)
         if lr is None:
             lr = im.shape; df = 1.0 / (lr[0] * dx)            # HR-spectrum sampling [cyc/um/px]
