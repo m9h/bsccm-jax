@@ -53,19 +53,28 @@ def main():
     print(f"  accuracy         {acc:.3f}   (majority baseline {maj:.3f}; benchmark ~0.88-0.91)")
 
     # --- regression (surface markers), if available ---
+    # Surface-marker regression: each cell is stained for ONE antibody, so we
+    # regress a given marker on THAT marker's stained cells (the benchmark setup).
     try:
-        sm = data.get_surface_marker_data(gi)
-        names = list(sm[0]); Y = np.asarray(sm[1], np.float32)   # (N, 9) marker abundances
-        reg, rn = ph.train_regressor(X[tr], Y[tr], steps=args.steps)
+        marker = "CD16"
+        m_idx = np.asarray([int(i) for i in data.get_indices(antibodies=marker)])
+        if len(m_idx) > args.n:
+            m_idx = m_idx[np.random.default_rng(3).permutation(len(m_idx))[:args.n]]
+        print(f"\nREGRESSION {marker}: {len(m_idx)} stained cells; extracting features ...")
+        Xm = ph.extract_features(data, m_idx)
+        sm = data.get_surface_marker_data([int(i) for i in m_idx])
+        names = list(sm[0]); Ym = np.asarray(sm[1], np.float32)
+        col = next(k for k, nm in enumerate(names) if marker in nm)
+        y = Ym[:, col]; keep = ~np.isnan(y)
+        Xm, y = Xm[keep], y[keep]
+        rp = np.random.default_rng(2).permutation(len(y)); nv = int(len(y) * 0.2)
+        vv, tt = rp[:nv], rp[nv:]
+        reg, rn = ph.train_regressor(Xm[tt], y[tt], steps=args.steps)
         import jax, jax.numpy as jnp
         mu, sd, ym, ys = rn
-        pr = np.asarray(jax.vmap(reg)((jnp.asarray(X[va]) - mu) / sd)) * np.asarray(ys) + np.asarray(ym)
-        cors = [np.corrcoef(pr[:, k], Y[va][:, k])[0, 1] for k in range(Y.shape[1])]
-        print(f"\nREGRESSION (surface markers, held-out):")
-        print(f"  mean Pearson     {np.nanmean(cors):.3f}")
-        cd16 = [i for i, n in enumerate(names) if "CD16" in n]
-        if cd16:
-            print(f"  CD16 Pearson     {cors[cd16[0]]:.3f}   (benchmark ~0.72)")
+        pr = np.asarray(jax.vmap(reg)((jnp.asarray(Xm[vv]) - mu) / sd))[:, 0] * float(ys[0]) + float(ym[0])
+        r = float(np.corrcoef(pr, y[vv])[0, 1])
+        print(f"  CD16 Pearson  {r:.3f}  (held-out {nv}; benchmark ~0.72)")
     except Exception as e:
         import traceback; traceback.print_exc()
         print(f"\nREGRESSION skipped: {type(e).__name__}: {str(e)[:100]}")
