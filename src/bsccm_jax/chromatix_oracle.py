@@ -11,16 +11,23 @@ plane wave (Chromatix `plane_wave(..., kykx=...)`); it passes through the thin
 phase sample (`phase_change`); the objective imposes its NA as a coherent
 low-pass in the pupil plane; intensities are summed incoherently over the source.
 
-STATUS: WIP. Chromatix is integrated (installs on jax 0.10.2, coexists with our
-stack) and this forward runs. Calibration so far:
+STATUS: WIP — integrated and runs, NOT yet quantitatively calibrated. Diagnostic
+progress (so the next pass starts ahead, doesn't repeat):
   * FIXED: kykx is the angular wavenumber 2*pi*sin(theta)/wavelength (was missing
-    the 2*pi -> illumination tilt 2pi x too small -> no DPC asymmetry).
-  * STILL OPEN: cross-check with the WOTF is still ~0 correlation, so a second
-    convention mismatch remains. Prime suspect: mixing Chromatix's field/FFT grid
-    with our shifted F/iF pupil (frequency grids may not align), or the objective
-    should be modelled with Chromatix's own ff_lens + circular_pupil (4f chain)
-    rather than our hand-applied Fourier low-pass. Diagnose by comparing the raw
-    per-angle |field|^2 spectra between the two before trusting this as an oracle.
+    the 2*pi -> illumination tilt 2pi x too small).
+  * RULED OUT: the "illumination sits on the pupil edge" hypothesis — sweeping
+    na_illum in {0.5,0.45,0.35,0.25} all give ~0 correlation with the WOTF.
+  * REMAINING: the differential still carries no WOTF-correlated phase-gradient
+    signal, so the per-source contrast itself is wrong, not the source geometry.
+    NEXT STEP (unit test, not blind iteration): build ONE point source, compute
+    its analytic WOTF (dpc.generate_wotf on a single delta-in-pupil source) and
+    compare to this forward's (I(phase) - I(0)) contrast for that same source.
+    That isolates whether the bug is (a) the pupil/FFT frequency-grid alignment
+    between Chromatix's field.u and our F/iF, or (b) that phase sidebands stay
+    symmetric about the (centered) pupil so the contrast cancels — in which case
+    the objective must be modelled with Chromatix's own ff_lens+circular_pupil 4f
+    chain (its native conventions), not our hand-applied Fourier low-pass.
+    Only trust as an oracle once the single-source contrast matches the WOTF.
 """
 
 from __future__ import annotations

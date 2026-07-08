@@ -159,14 +159,19 @@ optimize LED patterns (IDEAL objective), then reconstruct (bsccm-jax).
 
 ## Component inventory
 
+The full pipeline is **design → reconstruct → translate → phenotype**, all JAX/Kidger.
+
 | Piece | Where | Status |
 |---|---|---|
+| **Design:** differentiable coded-illumination | `src/bsccm_jax/design.py` | done — 46% better than DPC under noise |
 | DPC reconstruction (4 solvers) | `src/bsccm_jax/dpc.py` | done, tested |
 | Per-cell neural field | `src/bsccm_jax/neural_field.py` | done |
-| Amortized self-supervised recon | `src/bsccm_jax/amortized.py` | prototype (GPU needed) |
+| Amortized self-supervised recon | `src/bsccm_jax/amortized.py` | done (GPU for scale) |
+| **NeuPh / conditional neural field** | `src/bsccm_jax/neuph.py` | done — 0.97 held-out, sup + self-sup |
+| **FPM (super-resolution)** | `src/bsccm_jax/fpm.py` | done — phase corr 0.99 |
+| **Translate:** virtual staining | `configs/` + `scripts/eval_vs.py` | done — 0.78 corr |
+| **Phenotype:** classification + regression | `src/bsccm_jax/phenotype.py` | done (full eval data-gated) |
 | napari view | `src/bsccm_jax/view.py` | done |
-| Dryad OAuth downloader | `scripts/dryad_download.py` | done; 197 GB main fetched |
-| BSCCM → OME-Zarr converter | `scripts/bsccm_to_omezarr.py` | done |
-| Cytoland fine-tune config | `configs/bsccm_vs_finetune.yml` | training on GB10 |
-| Chromatix forward/oracle | (to adopt) | planned |
-| IDEAL teaching module | (to build) | planned |
+| Dryad OAuth downloader + OME-Zarr converter | `scripts/` | done; 197 GB fetched |
+| Chromatix wave-optics oracle | `src/bsccm_jax/chromatix_oracle.py` | integrated; quantitative calibration WIP |
+| IDEAL teaching module | `examples/ideal_teaching.py` | scaffold done |
