@@ -124,9 +124,14 @@ for loss curves + predicted-vs-true fluorescence image grids; then eval on val c
 
 ## 7. Educational direction — a two-part computational-imaging curriculum
 
-Two short Waller-lab papers form a clean curriculum, and `bsccm-jax` is the JAX
-substrate to teach both on real single-cell data (browser/zero-hardware):
-- **Part 1 — "what to measure": IDEAL** (below). Imaging as an information channel.
+A three-tier curriculum, and `bsccm-jax` is the JAX substrate to teach it on real
+single-cell data (browser/zero-hardware):
+- **Part 0 — foundations: "A Visual Introduction to Information Theory"**
+  (Pinkard, [blog](https://henrypinkard.github.io/blog/visual-info-theory/)).
+  Entropy, mutual information, channel capacity — intuition first, with figures.
+  The prerequisite before applying information to imaging.
+- **Part 1 — "what to measure": IDEAL** (below). Imaging as an information channel;
+  design measurements to maximize mutual information about the object.
 - **Part 2 — "how to reconstruct": "How to do Physics-based Learning"**
   (Kellman, Lustig & Waller 2020, [arXiv:2005.13531](https://arxiv.org/abs/2005.13531)).
   A 3-page tutorial: use autodiff through the forward model *twice* (to build the
