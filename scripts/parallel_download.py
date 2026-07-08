@@ -13,15 +13,36 @@ Variants: --variant {main,coherent,mnist}.
 
 import argparse
 import concurrent.futures as cf
+import os
 import shutil
-import tarfile
 import threading
 import time
 from pathlib import Path
 
 import requests
 
-from dryad_download import get_token, load_creds
+CREDS_FILE = Path.home() / ".config" / "dryad" / "credentials"
+
+
+def load_creds():
+    cid, sec = os.environ.get("DRYAD_CLIENT_ID"), os.environ.get("DRYAD_CLIENT_SECRET")
+    if not (cid and sec) and CREDS_FILE.exists():
+        for line in CREDS_FILE.read_text().splitlines():
+            if line.startswith("DRYAD_CLIENT_ID="):
+                cid = line.split("=", 1)[1].strip()
+            elif line.startswith("DRYAD_CLIENT_SECRET="):
+                sec = line.split("=", 1)[1].strip()
+    if not (cid and sec):
+        raise SystemExit("No Dryad creds (set DRYAD_CLIENT_ID/DRYAD_CLIENT_SECRET)")
+    return cid, sec
+
+
+def get_token(cid, sec):
+    r = requests.post("https://datadryad.org/oauth/token", data={
+        "grant_type": "client_credentials", "client_id": cid, "client_secret": sec}, timeout=30)
+    r.raise_for_status()
+    return r.json()["access_token"]
+
 
 BASE = "https://datadryad.org"
 DOI = "doi%3A10.5061%2Fdryad.sxksn038s"
