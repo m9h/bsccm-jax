@@ -84,6 +84,57 @@ def train_phenotype(data_path: str = "/data/BSCCM"):
     _run(f"uv run python scripts/train_phenotype.py --data {data_path} --n 6000")
 
 
+@app.function(image=image, cpu=16.0, memory=65536, volumes={"/data": vol}, timeout=4 * 3600)
+def stage_staining_data(data_path: str = "/data/BSCCM", n: int = 20000,
+                        out: str = "/data/bsccm_vs.zarr"):
+    """Convert full BSCCM -> paired HCS OME-Zarr (Phase + fluor) on the Volume."""
+    _run(f"uv run python scripts/bsccm_to_omezarr.py --data {data_path} --out {out} --n {n}")
+    vol.commit()
+
+
+# torch + VisCy/Cytoland image for the virtual-staining fine-tune (standard CUDA
+# GPUs on Modal -> plain torch wheels, no Blackwell container needed).
+staining_image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .apt_install("git", "build-essential")
+    .pip_install("uv")
+    .run_commands(
+        "uv pip install --system torch --index-url https://download.pytorch.org/whl/cu124",
+        "git clone https://github.com/mehta-lab/VisCy /root/VisCy",
+        "cd /root/VisCy && uv pip install --system "
+        "-e packages/viscy-utils -e packages/viscy-transforms "
+        "-e packages/viscy-data -e packages/viscy-models -e applications/cytoland",
+        "git clone https://github.com/m9h/bsccm-jax /root/bsccm-jax",
+    )
+    .workdir("/root/bsccm-jax")
+)
+
+
+@app.function(image=staining_image, gpu="a100", volumes={"/data": vol}, timeout=8 * 3600)
+def train_staining(zarr: str = "/data/bsccm_vs.zarr", max_epochs: int = 100):
+    """In-silico labeling: fine-tune Cytoland/VSUNet Phase->6-fluor on the full data."""
+    import subprocess
+    # 1) normalization metadata (NormalizeSampled needs it)
+    subprocess.run(
+        "python -c \"from viscy_utils.meta_utils import generate_normalization_metadata as g; "
+        f"g('{zarr}', num_workers=8)\"", shell=True, check=True)
+    # 2) fine-tune (config data_path/epochs overridden; wandb off, logger off)
+    subprocess.run(
+        f"WANDB_MODE=disabled viscy fit -c configs/bsccm_vs_finetune.yml "
+        f"--data.init_args.data_path={zarr} --trainer.max_epochs={max_epochs} "
+        f"--trainer.default_root_dir=/data/vs_out --trainer.enable_progress_bar=false",
+        shell=True, cwd="/root/bsccm-jax", check=True)
+    vol.commit()
+    print("virtual-staining model trained -> /data/vs_out (committed)")
+
+
+@app.function(image=image, cpu=8.0, memory=32768, volumes={"/data": vol}, timeout=3 * 3600)
+def benchmark(data_path: str = "/data/BSCCM"):
+    """Run the full-dataset benchmark and print the consolidated results table."""
+    _run(f"uv run python scripts/run_benchmark.py --data {data_path} --n 6000 --out /data/benchmark_results.json")
+    vol.commit()
+
+
 @app.local_entrypoint()
 def main():
     # default: validate the repo, then the Tier 2/3 reconstructors
