@@ -67,7 +67,8 @@ def main():
     print(f"cell {idx}: {len(imgs)} LEDs, LR {lr}, dx {dx}um, NA {na}, pupil_r {pupil_r:.1f}px, "
           f"max|shift| {np.abs(shifts).max()}px, HR {args.hr}")
 
-    rec = fpm.reconstruct_fpm(imgs, shifts, pupil, (args.hr, args.hr), steps=args.steps, lr=3e-2)
+    rec, _pupil = fpm.reconstruct_fpm_epry(imgs, shifts, pupil, (args.hr, args.hr),
+                                           iters=max(8, args.steps // 30))
 
     # brightfield = the most on-axis LED, upsampled; FPM should be sharper
     import jax, jax.numpy as jnp
