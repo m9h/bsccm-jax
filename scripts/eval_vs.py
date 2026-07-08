@@ -51,24 +51,51 @@ def main():
     plate = open_ome_zarr(args.data, mode="r")
     val = [(name, pos) for name, pos in plate.positions() if "/2/" in f"/{name}/"][: args.n]
 
-    rows, per_ch = [], {c: [] for c in FLUOR}
+    try:
+        from skimage.metrics import structural_similarity as ssim_fn
+        from skimage.metrics import peak_signal_noise_ratio as psnr_fn
+    except Exception:
+        ssim_fn = psnr_fn = None
+
+    def _norm01(a):
+        a = np.asarray(a, float); lo, hi = a.min(), a.max()
+        return (a - lo) / (hi - lo + 1e-8)
+
+    rows = []
+    per = {c: {"corr": [], "ssim": [], "psnr": [], "base": []} for c in FLUOR}
+    true_all = {c: [] for c in FLUOR}
     for name, pos in val:
-        arr = np.asarray(pos["0"])[0]                      # (C, Z, Y, X) -> drop T
+        arr = np.asarray(pos["0"])[0]
         ch = plate.channel_names
-        phase = arr[ch.index("Phase"), 0]                  # (Y, X)
+        phase = arr[ch.index("Phase"), 0]
         true = np.stack([arr[ch.index(c), 0] for c in FLUOR])
         x = torch.from_numpy(zscore(phase))[None, None, None].to(dev)
         with torch.no_grad():
-            pred = model(x).float().cpu().numpy()[0, :, 0]  # (6, Y, X)
+            pred = model(x).float().cpu().numpy()[0, :, 0]
         for i, c in enumerate(FLUOR):
-            per_ch[c].append(corr(pred[i], true[i]))
+            per[c]["corr"].append(corr(pred[i], true[i]))
+            true_all[c].append(true[i])
+            if ssim_fn is not None:
+                pn, tn = _norm01(pred[i]), _norm01(true[i])
+                per[c]["ssim"].append(ssim_fn(tn, pn, data_range=1.0))
+                per[c]["psnr"].append(psnr_fn(tn, pn, data_range=1.0))
         rows.append((name, phase, pred, true))
 
-    print("per-channel mean correlation (predicted vs true, n=%d):" % len(val))
+    # mean-image baseline (the floor): predict every cell as the dataset-mean image
     for c in FLUOR:
-        print(f"  {c:14s} {np.mean(per_ch[c]):+.3f}")
-    overall = np.mean([np.mean(v) for v in per_ch.values()])
-    print(f"  {'OVERALL':14s} {overall:+.3f}")
+        mean_img = np.mean(true_all[c], axis=0)
+        per[c]["base"] = [corr(mean_img, t) for t in true_all[c]]
+
+    print("per-channel metrics (predicted vs true, n=%d):" % len(val))
+    print(f"  {'channel':14s} {'corr':>6} {'SSIM':>6} {'PSNR':>6}  {'mean-img corr (floor)':>22}")
+    for c in FLUOR:
+        m = per[c]
+        ssim = np.mean(m["ssim"]) if m["ssim"] else float("nan")
+        psnr = np.mean(m["psnr"]) if m["psnr"] else float("nan")
+        print(f"  {c:14s} {np.mean(m['corr']):+.3f} {ssim:6.3f} {psnr:6.1f}  {np.mean(m['base']):+.3f}")
+    overall = np.mean([np.mean(per[c]["corr"]) for c in FLUOR])
+    floor = np.mean([np.mean(per[c]["base"]) for c in FLUOR])
+    print(f"  {'OVERALL':14s} {overall:+.3f}  (mean-image floor {floor:+.3f} — model must beat this)")
 
     # montage: show the most-informative fluor channel (500-550, index 4) per cell
     import matplotlib
