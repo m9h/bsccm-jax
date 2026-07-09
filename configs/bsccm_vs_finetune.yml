@@ -57,7 +57,10 @@ trainer:
   log_every_n_steps: 5
   check_val_every_n_epoch: 2
   default_root_dir: /work/out
-  logger: false   # VisCy's validation image-grid logging needs TB/W&B; skip it
+  logger:         # trackio: local-first, no wandb login prompt (view: `trackio show`)
+    class_path: bsccm_jax.trackio_logger.TrackioLogger
+    init_args:
+      project: bsccm-vs
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
