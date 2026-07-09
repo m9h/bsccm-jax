@@ -20,3 +20,4 @@ dryad_credentials
 # generated figures / artifacts
 *.png
 !docs/**/*.png
+data/fpm_uconn/

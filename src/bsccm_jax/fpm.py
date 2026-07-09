@@ -131,7 +131,8 @@ def reconstruct_fpm_epry(imgs, shifts, pupil, hr_shape, iters=12, update_pupil=T
 
     bf = amps[int(np.argmin((shifts ** 2).sum(1)))]
     BF = Fn(bf); O = np.zeros((H, W), np.complex128)
-    O[cy - h // 2:cy + h // 2, cx - w // 2:cx + w // 2] = BF
+    y0i, x0i = cy - h // 2, cx - w // 2                    # odd-safe (h,w may be odd)
+    O[y0i:y0i + h, x0i:x0i + w] = BF
     obj = iFn(O); O = Fn(obj)
     cand = [(dy, dx) for dy in range(-search, search + 1) for dx in range(-search, search + 1)]
 
