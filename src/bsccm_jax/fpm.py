@@ -105,7 +105,8 @@ def reconstruct_fpm(imgs, shifts, pupil, hr_shape, steps=400, lr=5e-2, seed=0):
 
 
 def reconstruct_fpm_epry(imgs, shifts, pupil, hr_shape, iters=12, update_pupil=True,
-                         alpha=1.0, beta=1.0, correct_positions=True, search=1, warmup=2):
+                         alpha=1.0, beta=1.0, correct_positions=True, search=1, warmup=2,
+                         correct_intensity=False):
     """EPRY alternating-projection FPM — robust on real data (NumPy).
 
     Embedded Pupil-function Recovery for FPM (Ou et al. 2014): sweep LEDs, replace
@@ -117,6 +118,13 @@ def reconstruct_fpm_epry(imgs, shifts, pupil, hr_shape, iters=12, update_pupil=T
     LED's pupil shift is refined by a local ±`search`-pixel search that minimizes
     the amplitude mismatch, removing the residual-position lattice artifact that
     survives global geometric calibration. Returns (object, pupil, refined_shifts).
+
+    correct_intensity: adaptive per-LED intensity correction (Bian/Zheng). LEDs
+    vary in brightness and fall off with angle (cos^4 + per-diode spread), which
+    EPRY's amplitude-replacement step mistakes for object energy — injecting a
+    periodic, LED-grid-aligned *lattice* artifact. When on, each LED's measured
+    amplitude is rescaled per iteration so its energy matches the current model
+    prediction in the pupil, decoupling brightness miscalibration from the object.
     """
     import numpy as np
     from numpy.fft import fft2, ifft2, fftshift, ifftshift
@@ -155,7 +163,14 @@ def reconstruct_fpm_epry(imgs, shifts, pupil, hr_shape, iters=12, update_pupil=T
             sub = O[y0:y0 + h, x0:x0 + w].copy()
             Psi = sub * P
             psi = iFn(Psi)
-            dPsi = Fn(amps[i] * np.exp(1j * np.angle(psi))) - Psi
+            a = amps[i]
+            if correct_intensity and it >= warmup:            # per-LED brightness match
+                # only once the object estimate is established, and bounded — an
+                # unbounded match from iter 0 suppresses darkfield LEDs (whose model
+                # energy is legitimately small) and destroys the super-resolution.
+                scale = np.sqrt(np.sum(np.abs(psi) ** 2) / (np.sum(a ** 2) + 1e-12))
+                a = a * np.clip(scale, 0.5, 2.0)
+            dPsi = Fn(a * np.exp(1j * np.angle(psi))) - Psi
             O[y0:y0 + h, x0:x0 + w] = sub + alpha * np.conj(P) / (np.abs(P).max() ** 2 + 1e-9) * dPsi
             if update_pupil:
                 P = P + beta * np.conj(sub) / (np.abs(sub).max() ** 2 + 1e-9) * dPsi

@@ -91,12 +91,30 @@ def k_vector(xi, yi, theta_deg, xint, yint, glass=True):
     return kx, ky, nat
 
 
-def reconstruct(imgs, kx, ky, wl, df, pupil_r, hr):
+def reconstruct(imgs, kx, ky, wl, df, pupil_r, hr, correct_intensity=False):
     shifts = np.stack([np.round(ky / wl / df), np.round(kx / wl / df)], 1).astype(int)
     pupil = fpm.circ_pupil(imgs.shape[1:], pupil_r)
-    rec, _P, _s = fpm.reconstruct_fpm_epry(imgs, shifts, pupil, (hr, hr),
-                                           iters=10, update_pupil=True, correct_positions=False)
+    rec, _P, _s = fpm.reconstruct_fpm_epry(imgs, shifts, pupil, (hr, hr), iters=10,
+                                           update_pupil=True, correct_positions=False,
+                                           correct_intensity=correct_intensity)
     return np.asarray(rec), shifts
+
+
+def lattice_score(amp, cutoff):
+    """Strength of periodic (LED-grid) ripple, normalized. High-passes the
+    amplitude and measures the fraction of high-freq spectral energy that sits in
+    sharp off-axis *peaks* (the lattice) vs the smooth continuum (real texture)."""
+    a = amp / (amp.mean() + 1e-9)
+    S = np.abs(np.fft.fftshift(np.fft.fft2(a - a.mean())))
+    hr = amp.shape[0]; yy, xx = np.mgrid[0:hr, 0:hr] - hr // 2
+    r = np.hypot(yy, xx)
+    ring = (r > cutoff * 0.6) & (r < cutoff * 1.6)            # around the synthetic edge
+    band = S[ring]
+    if band.size == 0:
+        return 0.0
+    # peakiness: how much energy is in the top 1% brightest bins (lattice peaks)
+    thresh = np.percentile(band, 99)
+    return float(band[band > thresh].sum() / (band.sum() + 1e-9))
 
 
 def main():
@@ -117,15 +135,13 @@ def main():
     xl, yl = led_location()
     xi, yi = xl - XSTART, yl - YSTART
     kx_g, ky_g, nat_g = k_vector(xi, yi, theta, xint, yint, glass=True)
-    kx_n, ky_n, _ = k_vector(xi, yi, theta, xint, yint, glass=False)
     print(f"{imgs.shape[0]} LEDs, LR {N}px, wl {wl*1e9:.0f}nm, NA_obj {NA_OBJ}, "
           f"pupil_r {pupil_r:.1f}px, max illum NA {nat_g.max():.3f} (synthetic NA "
           f"{NA_OBJ + nat_g.max():.2f} -> ~{(NA_OBJ+nat_g.max())/NA_OBJ:.1f}x)")
 
-    rec_g, sh_g = reconstruct(imgs, kx_g, ky_g, wl, df, pupil_r, hr)
-    rec_n, sh_n = reconstruct(imgs, kx_n, ky_n, wl, df, pupil_r, hr)
-    print(f"glass vs naive max |shift| diff: {np.abs(sh_g - sh_n).max()} px "
-          f"(mean {np.abs(sh_g - sh_n).mean():.2f})")
+    # glass geometry throughout; the experiment is intensity-correction OFF vs ON
+    rec_off, _ = reconstruct(imgs, kx_g, ky_g, wl, df, pupil_r, hr, correct_intensity=False)
+    rec_on, _ = reconstruct(imgs, kx_g, ky_g, wl, df, pupil_r, hr, correct_intensity=True)
 
     import jax, jax.numpy as jnp
     bf = np.asarray(jax.image.resize(jnp.asarray(np.sqrt(imgs[0])), (hr, hr), "bilinear"))
@@ -133,26 +149,30 @@ def main():
     yy, xx = np.mgrid[0:hr, 0:hr] - hr // 2
     r = np.hypot(yy, xx); cutoff = pupil_r * UPSMP
     beyond = lambda im: float(S(im)[r > cutoff].sum() / S(im).sum())
+    lat_off, lat_on = lattice_score(np.abs(rec_off), cutoff), lattice_score(np.abs(rec_on), cutoff)
     print(f"spectral energy beyond objective cutoff:  brightfield {beyond(bf):.3f}  "
-          f"FPM-naive {beyond(np.abs(rec_n)):.3f}  FPM-glass {beyond(np.abs(rec_g)):.3f}")
+          f"FPM {beyond(np.abs(rec_off)):.3f} (off) / {beyond(np.abs(rec_on)):.3f} (intensity-corrected)")
+    print(f"lattice score (lower=cleaner):  OFF {lat_off:.3f}  ON {lat_on:.3f}  "
+          f"-> {100*(lat_off-lat_on)/max(lat_off,1e-9):+.0f}%")
 
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     cr = slice(50, hr - 50)
+    zc = slice(hr // 2 - 60, hr // 2 + 60)                    # zoom to show the lattice texture
     fig, ax = plt.subplots(2, 3, figsize=(13, 9))
     panels = [
         (bf[cr, cr], "brightfield (1 LED)", "gray"),
-        (np.abs(rec_n)[cr, cr], "FPM amplitude — NAIVE angle", "gray"),
-        (np.abs(rec_g)[cr, cr], "FPM amplitude — GLASS-corrected", "gray"),
+        (np.abs(rec_off)[cr, cr], "FPM amplitude — no intensity corr.", "gray"),
+        (np.abs(rec_on)[cr, cr], "FPM amplitude — intensity-corrected", "gray"),
         (S(bf), "brightfield spectrum", "magma"),
-        (S(np.abs(rec_n)), "FPM spectrum — naive", "magma"),
-        (S(np.abs(rec_g)), "FPM spectrum — glass", "magma"),
+        (np.abs(rec_off)[zc, zc], f"zoom: OFF (lattice {lat_off:.3f})", "gray"),
+        (np.abs(rec_on)[zc, zc], f"zoom: ON (lattice {lat_on:.3f})", "gray"),
     ]
     for a, (im, t, cm) in zip(ax.ravel(), panels):
         a.imshow(im, cmap=cm); a.axis("off"); a.set_title(t, fontsize=10)
     fig.suptitle(f"UConn real-data FPM ({imgs.shape[0]} LEDs, {wl*1e9:.0f}nm, NA {NA_OBJ}): "
-                 f"glass-substrate refraction correction vs naive geometry", fontsize=12)
+                 f"per-LED intensity correction vs the residual lattice artifact", fontsize=12)
     fig.tight_layout(); fig.savefig(args.out, dpi=110)
     print("wrote", args.out)
 
