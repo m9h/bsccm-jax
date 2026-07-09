@@ -74,8 +74,10 @@ def main():
     print(f"cell {idx}: {len(imgs)} LEDs, LR {lr}, dx {dx}um, NA {na}, pupil_r {pupil_r:.1f}px, "
           f"max|shift| {np.abs(shifts).max()}px, HR {args.hr}")
 
+    # EPRY + calibrated geometry recovers the cell phase; integer position-correction
+    # did not further clean the residual (sub-pixel) lattice, so it's off by default.
     rec, _pupil, _sh = fpm.reconstruct_fpm_epry(imgs, shifts, pupil, (args.hr, args.hr),
-                                                iters=max(10, args.steps // 30), correct_positions=True)
+                                                iters=max(10, args.steps // 30), correct_positions=False)
 
     # brightfield = the most on-axis LED, upsampled; FPM should be sharper
     import jax, jax.numpy as jnp
