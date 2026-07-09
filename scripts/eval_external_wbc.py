@@ -72,6 +72,18 @@ def img_features(path, scales=(24, 12)):
     return np.concatenate(feats).astype(np.float32)
 
 
+def img_tensor(path, size=64):
+    """Resized (3, size, size) float image in [-1,1], colour preserved.
+
+    Deliberately NOT per-image standardized: stain hue/intensity is
+    discriminative for WBC types, so we keep absolute colour and just center to
+    [-1,1] (the conv net learns its own per-channel scaling from the batch)."""
+    from PIL import Image
+
+    im = np.asarray(Image.open(path).convert("RGB").resize((size, size)), np.float32) / 255.0
+    return np.transpose(im, (2, 0, 1)) * 2.0 - 1.0           # HWC->CHW, [-1,1]
+
+
 def load_folder(root, n_per_class, seed=0):
     """root/<class>/*.img -> (paths, labels, class_names), balanced-capped."""
     classes = sorted(
@@ -100,6 +112,9 @@ def main():
     ap.add_argument("--n-per-class", type=int, default=2000)
     ap.add_argument("--val-frac", type=float, default=0.2)
     ap.add_argument("--steps", type=int, default=3000)
+    ap.add_argument("--model", choices=["mlp", "cnn"], default="mlp",
+                    help="mlp = compact descriptors (fast, CPU); cnn = Equinox conv net")
+    ap.add_argument("--img-size", type=int, default=64)
     ap.add_argument("--json", default=None)
     args = ap.parse_args()
 
@@ -107,8 +122,11 @@ def main():
     print(f"{len(paths)} images | {len(names)} classes: {names}")
     print(f"class balance {np.bincount(y, minlength=len(names))}")
 
-    print("extracting features ...")
-    X = np.stack([img_features(p) for p in paths])
+    print(f"loading inputs ({args.model}) ...")
+    if args.model == "cnn":
+        X = np.stack([img_tensor(p, args.img_size) for p in paths])
+    else:
+        X = np.stack([img_features(p) for p in paths])
 
     # stratified held-out split
     rng = np.random.default_rng(1)
@@ -120,8 +138,12 @@ def main():
         va += list(idx[:k]); tr += list(idx[k:])
     tr, va = np.asarray(tr), np.asarray(va)
 
-    model, norm = ph.train_classifier(X[tr], y[tr], n_classes=len(names), steps=args.steps)
-    pred = ph.predict_classes(model, norm, X[va])
+    if args.model == "cnn":
+        model, _ = ph.train_cnn_classifier(X[tr], y[tr], n_classes=len(names), steps=args.steps)
+        pred = ph.predict_cnn(model, X[va])
+    else:
+        model, norm = ph.train_classifier(X[tr], y[tr], n_classes=len(names), steps=args.steps)
+        pred = ph.predict_classes(model, norm, X[va])
     acc = float(np.mean(pred == y[va]))
     maj = float(np.mean(y[va] == np.bincount(y[tr]).argmax()))
 

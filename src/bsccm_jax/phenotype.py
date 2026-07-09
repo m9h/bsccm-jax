@@ -92,6 +92,47 @@ def predict_classes(model, norm, X):
     return np.asarray(logits.argmax(-1))
 
 
+class ConvNet(eqx.Module):
+    """Compact Equinox CNN for RGB cell images — the conv-net upgrade the module
+    docstring promises, for when compact descriptors + MLP trail CNN SOTA."""
+    convs: list
+    head: eqx.nn.Linear
+    pool: eqx.nn.MaxPool2d
+
+    def __init__(self, n_classes, in_ch=3, widths=(32, 64, 128), *, key):
+        keys = jax.random.split(key, len(widths) + 1)
+        chs = [in_ch] + list(widths)
+        self.convs = [eqx.nn.Conv2d(chs[i], chs[i + 1], 3, padding=1, key=keys[i])
+                      for i in range(len(widths))]
+        self.pool = eqx.nn.MaxPool2d(2, 2)
+        self.head = eqx.nn.Linear(widths[-1], n_classes, key=keys[-1])
+
+    def __call__(self, x):                       # x: (C, H, W)
+        for conv in self.convs:
+            x = self.pool(jax.nn.relu(conv(x)))
+        return self.head(jnp.mean(x, axis=(1, 2)))   # global average pool -> head
+
+
+def train_cnn_classifier(X, y, n_classes, steps=2000, lr=1e-3, batch=64, seed=0):
+    """X: (N, C, H, W) float images (already normalized). Returns (model, None)."""
+    Xj, yj = jnp.asarray(X), jnp.asarray(y)
+    model = ConvNet(n_classes, in_ch=X.shape[1], key=jax.random.PRNGKey(0))
+
+    def loss_fn(m, xb, yb):
+        logits = jax.vmap(m)(xb)
+        return optax.softmax_cross_entropy_with_integer_labels(logits, yb).mean()
+
+    model = _train(model, Xj, yj, loss_fn, steps=steps, lr=lr, batch=batch, seed=seed)
+    return model, None
+
+
+def predict_cnn(model, X, batch=256):
+    outs = []
+    for i in range(0, len(X), batch):
+        outs.append(np.asarray(jax.vmap(model)(jnp.asarray(X[i:i + batch])).argmax(-1)))
+    return np.concatenate(outs)
+
+
 def train_regressor(X, y, **kw):
     """y: (N,) or (N, K) marker abundances."""
     Xj = jnp.asarray(X)
