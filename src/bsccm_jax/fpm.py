@@ -105,15 +105,18 @@ def reconstruct_fpm(imgs, shifts, pupil, hr_shape, steps=400, lr=5e-2, seed=0):
 
 
 def reconstruct_fpm_epry(imgs, shifts, pupil, hr_shape, iters=12, update_pupil=True,
-                         alpha=1.0, beta=1.0):
+                         alpha=1.0, beta=1.0, correct_positions=True, search=1, warmup=2):
     """EPRY alternating-projection FPM — robust on real data (NumPy).
 
     Embedded Pupil-function Recovery for FPM (Ou et al. 2014): sweep LEDs, replace
     each low-res field's amplitude with the measured sqrt(intensity), and update
     the object spectrum (and pupil) in that region. Initialized from the
-    brightfield (most on-axis LED) upsampled by Fourier zero-padding. Far more
-    robust than the gradient solver when illumination intensities and shifts are
-    imperfect — the real-data case.
+    brightfield (most on-axis LED) upsampled by Fourier zero-padding.
+
+    correct_positions: per-LED position correction — after `warmup` iters, each
+    LED's pupil shift is refined by a local ±`search`-pixel search that minimizes
+    the amplitude mismatch, removing the residual-position lattice artifact that
+    survives global geometric calibration. Returns (object, pupil, refined_shifts).
     """
     import numpy as np
     from numpy.fft import fft2, ifft2, fftshift, ifftshift
@@ -121,28 +124,39 @@ def reconstruct_fpm_epry(imgs, shifts, pupil, hr_shape, iters=12, update_pupil=T
     iFn = lambda x: fftshift(ifft2(ifftshift(x)))
 
     imgs = np.asarray(imgs, np.float64)
-    shifts = np.asarray(shifts, int)
+    shifts = np.asarray(shifts, int).copy()
     P = np.asarray(pupil, np.complex128)
     amps = np.sqrt(np.clip(imgs, 0, None))
     h, w = imgs.shape[1:]; H, W = hr_shape; cy, cx = H // 2, W // 2
 
-    # brightfield init: most on-axis LED, upsampled by spectral zero-padding
     bf = amps[int(np.argmin((shifts ** 2).sum(1)))]
     BF = Fn(bf); O = np.zeros((H, W), np.complex128)
     O[cy - h // 2:cy + h // 2, cx - w // 2:cx + w // 2] = BF
     obj = iFn(O); O = Fn(obj)
+    cand = [(dy, dx) for dy in range(-search, search + 1) for dx in range(-search, search + 1)]
 
-    for _ in range(iters):
+    for it in range(iters):
+        refine = correct_positions and it >= warmup
         for i in range(len(shifts)):
             sy, sx = shifts[i]
+            if refine:                                        # local shift search
+                best_err, best = np.inf, (sy, sx)
+                for dy, dx in cand:
+                    yy, xx = cy + sy + dy - h // 2, cx + sx + dx - w // 2
+                    if yy < 0 or xx < 0 or yy + h > H or xx + w > W:
+                        continue
+                    psi_c = iFn(O[yy:yy + h, xx:xx + w] * P)
+                    err = np.sum((np.abs(psi_c) - amps[i]) ** 2)
+                    if err < best_err:
+                        best_err, best = err, (sy + dy, sx + dx)
+                sy, sx = best; shifts[i] = [sy, sx]
             y0, x0 = cy + sy - h // 2, cx + sx - w // 2
             sub = O[y0:y0 + h, x0:x0 + w].copy()
             Psi = sub * P
             psi = iFn(Psi)
-            psi_new = amps[i] * np.exp(1j * np.angle(psi))   # amplitude constraint
-            dPsi = Fn(psi_new) - Psi
+            dPsi = Fn(amps[i] * np.exp(1j * np.angle(psi))) - Psi
             O[y0:y0 + h, x0:x0 + w] = sub + alpha * np.conj(P) / (np.abs(P).max() ** 2 + 1e-9) * dPsi
             if update_pupil:
                 P = P + beta * np.conj(sub) / (np.abs(sub).max() ** 2 + 1e-9) * dPsi
-                P *= (np.asarray(pupil) > 0)                  # keep support
-    return iFn(O), P
+                P *= (np.asarray(pupil) > 0)
+    return iFn(O), P, shifts
