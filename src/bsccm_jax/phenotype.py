@@ -113,16 +113,52 @@ class ConvNet(eqx.Module):
         return self.head(jnp.mean(x, axis=(1, 2)))   # global average pool -> head
 
 
-def train_cnn_classifier(X, y, n_classes, steps=2000, lr=1e-3, batch=64, seed=0):
-    """X: (N, C, H, W) float images (already normalized). Returns (model, None)."""
+def augment_images(x, key, color=0.3, geom=True):
+    """On-the-fly augmentation for a batch (B,C,H,W). Per-channel gain+bias colour
+    jitter simulates the white-balance/stain shift across microscopes (the
+    literature fix for WBC domain shift); geom = random flips."""
+    k1, k2, k3, k4 = jax.random.split(key, 4)
+    if geom:
+        x = jnp.where(jax.random.bernoulli(k1, 0.5), x[:, :, :, ::-1], x)
+        x = jnp.where(jax.random.bernoulli(k2, 0.5), x[:, :, ::-1, :], x)
+    B, C = x.shape[0], x.shape[1]
+    gain = 1.0 + color * jax.random.uniform(k3, (B, C, 1, 1), minval=-1.0, maxval=1.0)
+    bias = color * jax.random.uniform(k4, (B, C, 1, 1), minval=-1.0, maxval=1.0)
+    return x * gain + bias
+
+
+def train_cnn_classifier(X, y, n_classes, steps=2000, lr=1e-3, batch=64, seed=0,
+                         augment=False, color=0.15):
+    """X: (N, C, H, W) float images. Returns (model, None).
+
+    augment=True applies colour-jitter + flip augmentation for cross-microscope
+    robustness. NOTE: for the Raabin white-balance shift, white-balance-invariant
+    preprocessing (eval_external_wbc --color-norm standardize) beats augmentation
+    (better Test-B macro-recall, no Test-A cost); strong colour jitter over-
+    regularizes. Augmentation is folded into the jitted step (was slow eager)."""
     Xj, yj = jnp.asarray(X), jnp.asarray(y)
     model = ConvNet(n_classes, in_ch=X.shape[1], key=jax.random.PRNGKey(0))
+    opt = optax.adamw(lr)
+    opt_state = opt.init(eqx.filter(model, eqx.is_array))
 
     def loss_fn(m, xb, yb):
         logits = jax.vmap(m)(xb)
         return optax.softmax_cross_entropy_with_integer_labels(logits, yb).mean()
 
-    model = _train(model, Xj, yj, loss_fn, steps=steps, lr=lr, batch=batch, seed=seed)
+    @eqx.filter_jit
+    def step(model, opt_state, xb, yb, ak):
+        if augment:                                  # python bool -> static under jit
+            xb = augment_images(xb, ak, color=color)
+        loss, grads = eqx.filter_value_and_grad(loss_fn)(model, xb, yb)
+        updates, opt_state = opt.update(grads, opt_state, eqx.filter(model, eqx.is_array))
+        return eqx.apply_updates(model, updates), opt_state, loss
+
+    key = jax.random.PRNGKey(seed)
+    n = len(Xj)
+    for _ in range(steps):
+        key, sk, ak = jax.random.split(key, 3)
+        idx = jax.random.randint(sk, (min(batch, n),), 0, n)
+        model, opt_state, _ = step(model, opt_state, Xj[idx], yj[idx], ak)
     return model, None
 
 

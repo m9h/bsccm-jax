@@ -144,6 +144,8 @@ def main():
     ap.add_argument("--color-norm", choices=["absolute", "standardize"], default="absolute",
                     help="standardize = white-balance-invariant (per-image per-channel z-score); "
                          "use for cross-microscope domain shift")
+    ap.add_argument("--augment", action="store_true",
+                    help="CNN only: train-time colour-jitter + flip augmentation for domain robustness")
     ap.add_argument("--test-data", nargs="+", default=None,
                     help="separate test folders (e.g. Raabin TestA TestB) for a "
                          "train->test domain-shift protocol; trains on --data")
@@ -157,7 +159,7 @@ def main():
 
     def fit(Xtr, ytr, nc):
         if args.model == "cnn":
-            m, _ = ph.train_cnn_classifier(Xtr, ytr, n_classes=nc, steps=args.steps)
+            m, _ = ph.train_cnn_classifier(Xtr, ytr, n_classes=nc, steps=args.steps, augment=args.augment)
             return ("cnn", m)
         m, norm = ph.train_classifier(Xtr, ytr, n_classes=nc, steps=args.steps)
         return ("mlp", m, norm)
