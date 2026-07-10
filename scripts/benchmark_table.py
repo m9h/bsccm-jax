@@ -34,6 +34,8 @@ BENCHMARKS = [
      "scripts/eval_vscyto2d.py (published ckpt)", "vscyto2d_metrics.json", "overall_pcc"),
     ("Allen lamin_b1", "virtual staining (2D)", "PCC vs floor", "0.258 / floor 0.175", "3D fnet ~0.85",
      "scripts/allen_to_omezarr.py -> allen_lamin.yml -> scripts/eval_allen.py", "allen_metrics.json", "pcc"),
+    ("Allen lamin_b1", "virtual staining (2.5D)", "PCC vs floor", "0.319 / floor 0.098", "3D fnet ~0.85",
+     "allen_to_omezarr.py --stack -> allen_lamin_3d.yml -> eval_allen.py --arch 3d", "metrics3d.json", "pcc"),
     ("PBC-Barcelona", "WBC classification (MLP)", "accuracy", "0.811", "floor 0.149",
      "scripts/eval_external_wbc.py --model mlp", None, None),
     ("PBC-Barcelona", "WBC classification (CNN)", "accuracy", "0.928", "CNN SOTA ~0.96-0.99",
