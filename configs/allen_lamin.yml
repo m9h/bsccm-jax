@@ -1,0 +1,66 @@
+# Allen Label-Free: transmitted-light Brightfield -> lamin-B1 nuclear envelope.
+# Independent signal-rich virtual-staining benchmark (Ounkomol et al. 2018).
+# Trains from scratch on allen_train.zarr; eval PCC on allen_val.zarr (held-out files).
+seed_everything: 42
+model:
+  class_path: cytoland.engine.VSUNet
+  init_args:
+    architecture: fcmae
+    model_config:
+      in_channels: 1          # Brightfield
+      out_channels: 1         # Lamin
+      encoder_blocks: [3, 3, 9, 3]
+      dims: [96, 192, 384, 768]
+      decoder_conv_blocks: 2
+      stem_kernel_size: [1, 2, 2]
+      in_stack_depth: 1
+      pretraining: false
+    loss_function:
+      class_path: viscy_utils.losses.MixedLoss
+      init_args:
+        l1_alpha: 1.0
+        l2_alpha: 0.0
+        ms_dssim_alpha: 0.0
+    lr: 0.0002
+    schedule: WarmupCosine
+    warmup_steps: 50
+    example_input_yx_shape: [256, 256]
+data:
+  class_path: viscy_data.hcs.HCSDataModule
+  init_args:
+    data_path: /work/allen/allen_train.zarr
+    source_channel: "Brightfield"
+    target_channel: ["Lamin"]
+    z_window_size: 1
+    split_ratio: 0.85
+    batch_size: 16
+    num_workers: 8
+    yx_patch_size: [256, 256]
+    normalizations:
+      - class_path: viscy_transforms.NormalizeSampled
+        init_args:
+          keys: ["Brightfield", "Lamin"]
+          level: fov_statistics
+          subtrahend: median
+          divisor: iqr
+trainer:
+  accelerator: gpu
+  devices: 1
+  precision: bf16-mixed
+  max_epochs: 120
+  log_every_n_steps: 5
+  check_val_every_n_epoch: 4
+  default_root_dir: /work/allen/out
+  logger:
+    class_path: bsccm_jax.trackio_logger.TrackioLogger
+    init_args:
+      project: allen-lamin
+      save_dir: /work/allen/out
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: loss/validate
+        mode: min
+        save_top_k: 3
+        save_last: true
+        filename: "allen-lamin-{epoch:03d}-{step:05d}"
