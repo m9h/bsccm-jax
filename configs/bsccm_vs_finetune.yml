@@ -61,6 +61,7 @@ trainer:
     class_path: bsccm_jax.trackio_logger.TrackioLogger
     init_args:
       project: bsccm-vs
+      save_dir: /work/out   # where LightningCLI writes config.yaml + checkpoints
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
