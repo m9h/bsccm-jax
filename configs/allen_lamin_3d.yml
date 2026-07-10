@@ -1,0 +1,66 @@
+# Allen Label-Free 2.5D: 5-slice Brightfield z-window -> lamin-B1 central slice.
+# The 3D-context version — chases the published Ounkomol 3D r~0.85 that the
+# 2D single-slice model (PCC 0.26) cannot reach. VSCyto3D architecture.
+seed_everything: 42
+model:
+  class_path: cytoland.engine.VSUNet
+  init_args:
+    architecture: UNeXt2
+    model_config:
+      in_channels: 1            # Brightfield
+      out_channels: 1           # Lamin
+      in_stack_depth: 5         # 5-slice z-window input
+      backbone: convnextv2_tiny
+      stem_kernel_size: [5, 4, 4]
+      decoder_mode: pixelshuffle
+      head_expansion_ratio: 4
+      head_pool: true           # pool z -> 2D central-slice prediction
+    loss_function:
+      class_path: viscy_utils.losses.MixedLoss
+      init_args:
+        l1_alpha: 1.0
+        l2_alpha: 0.0
+        ms_dssim_alpha: 0.0
+    lr: 0.0002
+    schedule: WarmupCosine
+    warmup_steps: 50
+    example_input_yx_shape: [256, 256]
+data:
+  class_path: viscy_data.hcs.HCSDataModule
+  init_args:
+    data_path: /work/allen/allen_train3d.zarr
+    source_channel: "Brightfield"
+    target_channel: ["Lamin"]
+    z_window_size: 5
+    split_ratio: 0.85
+    batch_size: 4
+    num_workers: 4
+    yx_patch_size: [256, 256]
+    normalizations:
+      - class_path: viscy_transforms.NormalizeSampled
+        init_args:
+          keys: ["Brightfield", "Lamin"]
+          level: fov_statistics
+          subtrahend: median
+          divisor: iqr
+trainer:
+  accelerator: gpu
+  devices: 1
+  precision: bf16-mixed
+  max_epochs: 120
+  log_every_n_steps: 5
+  check_val_every_n_epoch: 4
+  default_root_dir: /work/allen/out3d
+  logger:
+    class_path: bsccm_jax.trackio_logger.TrackioLogger
+    init_args:
+      project: allen-lamin-3d
+      save_dir: /work/allen/out3d
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: loss/validate
+        mode: min
+        save_top_k: 3
+        save_last: true
+        filename: "allen-lamin3d-{epoch:03d}-{step:05d}"

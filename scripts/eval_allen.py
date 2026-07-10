@@ -18,9 +18,12 @@ from iohub import open_ome_zarr
 from cytoland.engine import VSUNet
 from viscy_utils.losses import MixedLoss
 
-MODEL_CONFIG = dict(in_channels=1, out_channels=1, encoder_blocks=[3, 3, 9, 3],
-                    dims=[96, 192, 384, 768], decoder_conv_blocks=2,
-                    stem_kernel_size=[1, 2, 2], in_stack_depth=1, pretraining=False)
+MODEL_CONFIG_2D = dict(in_channels=1, out_channels=1, encoder_blocks=[3, 3, 9, 3],
+                       dims=[96, 192, 384, 768], decoder_conv_blocks=2,
+                       stem_kernel_size=[1, 2, 2], in_stack_depth=1, pretraining=False)
+MODEL_CONFIG_3D = dict(in_channels=1, out_channels=1, in_stack_depth=5,
+                       backbone="convnextv2_tiny", stem_kernel_size=[5, 4, 4],
+                       decoder_mode="pixelshuffle", head_expansion_ratio=4, head_pool=True)
 
 
 def pcc(a, b):
@@ -30,13 +33,14 @@ def pcc(a, b):
 
 
 def tiled(model, x, dev, tile=512, halo=64):
-    H, W = x.shape
+    """x: (Z, H, W) input z-window (Z=1 for 2D). Returns (H, W) central prediction."""
+    _, H, W = x.shape
     out = np.zeros((H, W), np.float32)
     for y0 in range(0, H, tile):
         for x0 in range(0, W, tile):
             ya, yb = max(0, y0 - halo), min(H, y0 + tile + halo)
             xa, xb = max(0, x0 - halo), min(W, x0 + tile + halo)
-            patch = torch.from_numpy(x[ya:yb, xa:xb])[None, None, None].to(dev)
+            patch = torch.from_numpy(x[:, ya:yb, xa:xb])[None, None].to(dev)   # (1,1,Z,h,w)
             with torch.no_grad():
                 p = model(patch).float().cpu().numpy()[0, 0, 0]
             yi0, xi0 = y0 - ya, x0 - xa
@@ -52,15 +56,21 @@ def main():
     ap.add_argument("--json", default=None)
     ap.add_argument("--out", default=None)
     ap.add_argument("--n", type=int, default=40)
+    ap.add_argument("--arch", choices=["2d", "3d"], default="2d")
+    ap.add_argument("--zwin", type=int, default=1, help="input z-window (5 for 2.5D)")
     args = ap.parse_args()
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    model = VSUNet(architecture="fcmae", model_config=MODEL_CONFIG,
-                   loss_function=MixedLoss(l1_alpha=1.0))
+    if args.arch == "3d":
+        model = VSUNet(architecture="UNeXt2", model_config=MODEL_CONFIG_3D,
+                       loss_function=MixedLoss(l1_alpha=1.0))
+    else:
+        model = VSUNet(architecture="fcmae", model_config=MODEL_CONFIG_2D,
+                       loss_function=MixedLoss(l1_alpha=1.0))
     sd = torch.load(args.ckpt, weights_only=True, map_location="cpu")["state_dict"]
     model.load_state_dict(sd)
     model.eval().to(dev)
-    print(f"loaded Allen model on {dev}")
+    print(f"loaded Allen {args.arch} model on {dev} (zwin={args.zwin})")
 
     plate = open_ome_zarr(args.data, mode="r")
     ch = plate.channel_names
@@ -68,11 +78,14 @@ def main():
     preds, truths, rows = [], [], []
     for name, pos in list(plate.positions())[: args.n]:
         arr = np.asarray(pos["0"])[0]                       # (c, z, y, x)
-        bright = arr[bi, 0].astype(np.float32)
+        zc = arr.shape[1] // 2
+        z0 = max(0, zc - args.zwin // 2)
+        bwin = arr[bi, z0:z0 + args.zwin].astype(np.float32)   # (zwin, H, W)
         st = pos.zattrs["normalization"]["Brightfield"]["fov_statistics"]
-        x = (bright - st["median"]) / (st["iqr"] + 1e-8)
+        x = (bwin - st["median"]) / (st["iqr"] + 1e-8)
         pred = tiled(model, x, dev)
-        truth = arr[li, 0].astype(np.float32)
+        truth = arr[li, zc].astype(np.float32)              # central lamin slice
+        bright = bwin[bwin.shape[0] // 2]                    # central brightfield for display
         preds.append(pcc(pred, truth)); truths.append(truth)
         rows.append((name, bright, pred, truth))
 
