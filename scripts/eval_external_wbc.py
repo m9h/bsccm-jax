@@ -72,16 +72,24 @@ def img_features(path, scales=(24, 12)):
     return np.concatenate(feats).astype(np.float32)
 
 
-def img_tensor(path, size=64):
-    """Resized (3, size, size) float image in [-1,1], colour preserved.
+def img_tensor(path, size=64, color_norm="absolute"):
+    """Resized (3, size, size) float image.
 
-    Deliberately NOT per-image standardized: stain hue/intensity is
-    discriminative for WBC types, so we keep absolute colour and just center to
-    [-1,1] (the conv net learns its own per-channel scaling from the batch)."""
+    color_norm="absolute": keep absolute colour, center to [-1,1]. Stain hue is
+      discriminative WITHIN a dataset (eosinophil granules, etc.) — but makes the
+      model fragile to a white-balance/stain shift across microscopes.
+    color_norm="standardize": per-image, per-channel z-score. Removes a global
+      colour cast (white-balance invariance) at the cost of absolute-hue cues —
+      the fix for cross-microscope domain shift (e.g. Raabin Test-B)."""
     from PIL import Image
 
     im = np.asarray(Image.open(path).convert("RGB").resize((size, size)), np.float32) / 255.0
-    return np.transpose(im, (2, 0, 1)) * 2.0 - 1.0           # HWC->CHW, [-1,1]
+    im = np.transpose(im, (2, 0, 1))                         # HWC -> CHW
+    if color_norm == "standardize":
+        for c in range(3):
+            im[c] = (im[c] - im[c].mean()) / (im[c].std() + 1e-6)
+        return im
+    return im * 2.0 - 1.0                                    # [-1,1]
 
 
 def _descend(root):
@@ -133,6 +141,9 @@ def main():
     ap.add_argument("--model", choices=["mlp", "cnn"], default="mlp",
                     help="mlp = compact descriptors (fast, CPU); cnn = Equinox conv net")
     ap.add_argument("--img-size", type=int, default=64)
+    ap.add_argument("--color-norm", choices=["absolute", "standardize"], default="absolute",
+                    help="standardize = white-balance-invariant (per-image per-channel z-score); "
+                         "use for cross-microscope domain shift")
     ap.add_argument("--test-data", nargs="+", default=None,
                     help="separate test folders (e.g. Raabin TestA TestB) for a "
                          "train->test domain-shift protocol; trains on --data")
@@ -141,7 +152,7 @@ def main():
 
     def build_X(paths):
         if args.model == "cnn":
-            return np.stack([img_tensor(p, args.img_size) for p in paths])
+            return np.stack([img_tensor(p, args.img_size, args.color_norm) for p in paths])
         return np.stack([img_features(p) for p in paths])
 
     def fit(Xtr, ytr, nc):
