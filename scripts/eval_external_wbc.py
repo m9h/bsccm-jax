@@ -84,26 +84,44 @@ def img_tensor(path, size=64):
     return np.transpose(im, (2, 0, 1)) * 2.0 - 1.0           # HWC->CHW, [-1,1]
 
 
-def load_folder(root, n_per_class, seed=0):
-    """root/<class>/*.img -> (paths, labels, class_names), balanced-capped."""
-    classes = sorted(
+def _descend(root):
+    """Descend through single-subdir wrappers (e.g. Train/Train/) to the class dirs."""
+    while True:
+        subs = [d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d))]
+        if len(subs) == 1 and not glob.glob(os.path.join(root, subs[0], "*." + "jpg")):
+            # a lone wrapper dir with no images directly under it -> descend
+            nxt = os.path.join(root, subs[0])
+            if any(os.path.isdir(os.path.join(nxt, d)) for d in os.listdir(nxt)):
+                root = nxt; continue
+        return root
+
+
+def load_folder(root, n_per_class, seed=0, classes=None):
+    """root/<class>/*.img -> (paths, labels, class_names), balanced-capped.
+
+    If `classes` (a canonical name list) is given, labels map into it — so a
+    train folder and separate test folders share a consistent label space.
+    """
+    root = _descend(root)
+    dirs = sorted(
         d for d in os.listdir(root)
         if os.path.isdir(os.path.join(root, d))
         and glob.glob(os.path.join(root, d, "**", "*"), recursive=True)
     )
-    # merge classes that canonicalize to the same WBC type
-    canon_names = sorted(set(canon(c) for c in classes))
-    cls_to_idx = {c: canon_names.index(canon(c)) for c in classes}
+    canon_names = classes if classes is not None else sorted(set(canon(d) for d in dirs))
     rng = np.random.default_rng(seed)
     paths, labels = [], []
-    for c in classes:
-        files = [f for f in glob.glob(os.path.join(root, c, "**", "*"), recursive=True)
+    for d in dirs:
+        cn = canon(d)
+        if cn not in canon_names:
+            continue
+        files = [f for f in glob.glob(os.path.join(root, d, "**", "*"), recursive=True)
                  if f.lower().endswith(IMG_EXT)]
         if len(files) > n_per_class:
             files = list(rng.permutation(files)[:n_per_class])
         paths += files
-        labels += [cls_to_idx[c]] * len(files)
-    return paths, np.asarray(labels, int), canon_names
+        labels += [canon_names.index(cn)] * len(files)
+    return paths, np.asarray(labels, int), list(canon_names)
 
 
 def main():
@@ -115,54 +133,67 @@ def main():
     ap.add_argument("--model", choices=["mlp", "cnn"], default="mlp",
                     help="mlp = compact descriptors (fast, CPU); cnn = Equinox conv net")
     ap.add_argument("--img-size", type=int, default=64)
+    ap.add_argument("--test-data", nargs="+", default=None,
+                    help="separate test folders (e.g. Raabin TestA TestB) for a "
+                         "train->test domain-shift protocol; trains on --data")
     ap.add_argument("--json", default=None)
     args = ap.parse_args()
 
+    def build_X(paths):
+        if args.model == "cnn":
+            return np.stack([img_tensor(p, args.img_size) for p in paths])
+        return np.stack([img_features(p) for p in paths])
+
+    def fit(Xtr, ytr, nc):
+        if args.model == "cnn":
+            m, _ = ph.train_cnn_classifier(Xtr, ytr, n_classes=nc, steps=args.steps)
+            return ("cnn", m)
+        m, norm = ph.train_classifier(Xtr, ytr, n_classes=nc, steps=args.steps)
+        return ("mlp", m, norm)
+
+    def infer(model, X):
+        return ph.predict_cnn(model[1], X) if model[0] == "cnn" else ph.predict_classes(model[1], model[2], X)
+
+    def report(name, y_true, pred, names, train_labels):
+        acc = float(np.mean(pred == y_true))
+        maj = float(np.mean(y_true == np.bincount(train_labels).argmax()))
+        macro = float(np.mean([np.mean(pred[y_true == c] == c) for c in range(len(names)) if (y_true == c).any()]))
+        print(f"\n{name} (n={len(y_true)}):  accuracy {acc:.3f}  macro-recall {macro:.3f}  (majority {maj:.3f})")
+        per = {}
+        for c, nm in enumerate(names):
+            m = y_true == c
+            r = float(np.mean(pred[m] == c)) if m.any() else float("nan")
+            per[nm] = round(r, 4)
+            print(f"    {nm:14s} {r:.3f}  (n={int(m.sum())})")
+        return {"set": name, "accuracy": round(acc, 4), "macro_recall": round(macro, 4),
+                "majority": round(maj, 4), "per_class_recall": per}
+
     paths, y, names = load_folder(args.data, args.n_per_class)
-    print(f"{len(paths)} images | {len(names)} classes: {names}")
+    print(f"TRAIN {len(paths)} images | {len(names)} classes: {names}")
     print(f"class balance {np.bincount(y, minlength=len(names))}")
+    print(f"building inputs ({args.model}) ...")
+    X = build_X(paths)
 
-    print(f"loading inputs ({args.model}) ...")
-    if args.model == "cnn":
-        X = np.stack([img_tensor(p, args.img_size) for p in paths])
-    else:
-        X = np.stack([img_features(p) for p in paths])
-
-    # stratified held-out split
-    rng = np.random.default_rng(1)
-    tr, va = [], []
-    for c in range(len(names)):
-        idx = np.where(y == c)[0]
-        rng.shuffle(idx)
-        k = int(len(idx) * args.val_frac)
-        va += list(idx[:k]); tr += list(idx[k:])
-    tr, va = np.asarray(tr), np.asarray(va)
-
-    if args.model == "cnn":
-        model, _ = ph.train_cnn_classifier(X[tr], y[tr], n_classes=len(names), steps=args.steps)
-        pred = ph.predict_cnn(model, X[va])
-    else:
-        model, norm = ph.train_classifier(X[tr], y[tr], n_classes=len(names), steps=args.steps)
-        pred = ph.predict_classes(model, norm, X[va])
-    acc = float(np.mean(pred == y[va]))
-    maj = float(np.mean(y[va] == np.bincount(y[tr]).argmax()))
-
-    # per-class recall + confusion
-    print(f"\nCROSS-DATASET WBC (held-out {len(va)} imgs):")
-    print(f"  accuracy   {acc:.3f}   (majority floor {maj:.3f})")
-    print("  per-class recall:")
-    per = {}
-    for c, nm in enumerate(names):
-        m = y[va] == c
-        r = float(np.mean(pred[m] == c)) if m.any() else float("nan")
-        per[nm] = round(r, 4)
-        print(f"    {nm:22s} {r:.3f}  (n={int(m.sum())})")
+    results = []
+    if args.test_data:                       # train->test domain-shift protocol
+        model = fit(X, y, len(names))
+        for td in args.test_data:
+            tp, ty, _ = load_folder(td, args.n_per_class, classes=names)
+            results.append(report(os.path.basename(td.rstrip("/")), ty, infer(model, build_X(tp)), names, y))
+    else:                                    # single-folder internal split
+        rng = np.random.default_rng(1)
+        tr, va = [], []
+        for c in range(len(names)):
+            idx = np.where(y == c)[0]; rng.shuffle(idx)
+            k = int(len(idx) * args.val_frac)
+            va += list(idx[:k]); tr += list(idx[k:])
+        tr, va = np.asarray(tr), np.asarray(va)
+        model = fit(X[tr], y[tr], len(names))
+        results.append(report("held-out", y[va], infer(model, X[va]), names, y[tr]))
 
     if args.json:
         import json
-        out = {"accuracy": round(acc, 4), "majority_floor": round(maj, 4),
-               "n_val": len(va), "classes": names, "per_class_recall": per}
-        json.dump(out, open(args.json, "w"), indent=2)
+        json.dump({"classes": names, "results": results}, open(args.json, "w"), indent=2)
         print("wrote", args.json)
 
 
