@@ -143,6 +143,51 @@ def recover_dusk(f, ts, kf, kb, qe=10.0, bg=0.25, steps=2000, lr=3e-3,
     return c_of(model)
 
 
+def recover_dusk_calibrated(f, ts, kf, kb, steps=2500, lr=3e-3, tv=5e-4,
+                            width=64, depth=3, scale=1000.0, seed=0):
+    """DUSK for REAL fluorescence (e.g. dF/F): the fluorescence-to-bound-fraction
+    calibration is unknown, so jointly fit gain qe and offset bg alongside the
+    prior — f ~= qe*binding_forward(c) + bg. Returns (c(t), qe, bg).
+
+    Real dF/F carries an arbitrary linear scale/offset (F0 normalization), which
+    the synthetic recover_dusk's fixed qe/bg can't absorb; fitting them lets DUSK
+    invert the sensor ODE on genuine recordings."""
+    ts = jnp.asarray(ts, jnp.float64)
+    f = jnp.asarray(f, jnp.float64)
+    tn = (ts - ts[0]) / (ts[-1] - ts[0])
+
+    class _P(eqx.Module):
+        prior: _TimePrior
+        log_qe: jax.Array
+        bg: jax.Array
+
+    rng = jnp.ptp(f)
+    params = _P(prior=_TimePrior(width=width, depth=depth, scale=scale, key=jax.random.PRNGKey(seed)),
+                log_qe=jnp.log(jnp.maximum(rng, 0.1)), bg=jnp.asarray(float(jnp.min(f))))
+
+    def c_of(p):
+        return jax.vmap(p.prior)(tn)
+
+    def loss_fn(p):
+        c = c_of(p)
+        g = binding_forward(c, ts, kf, kb)
+        data = jnp.mean(jnp.abs(jnp.exp(p.log_qe) * g + p.bg - f))
+        return data + tv * jnp.mean(jnp.abs(jnp.diff(c)))
+
+    opt = optax.adam(lr)
+    state = opt.init(eqx.filter(params, eqx.is_array))
+
+    @eqx.filter_jit
+    def step(params, state):
+        loss, grads = eqx.filter_value_and_grad(loss_fn)(params)
+        updates, state = opt.update(grads, state, eqx.filter(params, eqx.is_array))
+        return eqx.apply_updates(params, updates), state, loss
+
+    for _ in range(steps):
+        params, state, _ = step(params, state)
+    return c_of(params), float(jnp.exp(params.log_qe)), float(params.bg)
+
+
 def calcium_transients(ts, spikes=((0.4, 800.0), (0.65, 400.0), (0.85, 1000.0)),
                        tau_rise=0.02, tau_decay=0.15, baseline=20.0):
     """Synthetic [Ca] ground truth: fast-rising, exp-decaying spikes on a baseline."""

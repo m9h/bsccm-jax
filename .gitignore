@@ -21,3 +21,5 @@ dryad_credentials
 *.png
 !docs/**/*.png
 data/fpm_uconn/
+data/*.mat
+data/fpm_uconn/
